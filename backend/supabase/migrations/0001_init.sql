@@ -13,7 +13,8 @@ create type recipient_role as enum ('supervising_health_worker', 'patient', 'doc
 create table patients (
   id uuid primary key default gen_random_uuid(),
   display_name text not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id)
 );
 
 -- Who may see a given patient's entries, and in what capacity. A CHW visiting
@@ -62,22 +63,29 @@ alter table patients enable row level security;
 alter table patient_relationships enable row level security;
 alter table entries enable row level security;
 
--- A user may see a patient row only if they have some relationship to that patient.
+-- A user may see a patient row if they have a relationship to it, OR if they
+-- created it themselves. The `created_by` clause exists specifically so a
+-- freshly-inserted patient is readable via INSERT...RETURNING before any
+-- patient_relationships row exists for it yet (that row is always created in
+-- a second statement right after) — without it, INSERT...RETURNING fails
+-- RLS because Postgres checks the SELECT policy to return the new row.
 create policy "patients readable by related users"
   on patients for select
   using (
-    exists (
+    created_by = auth.uid()
+    or exists (
       select 1 from patient_relationships pr
       where pr.patient_id = patients.id and pr.user_id = auth.uid()
     )
   );
 
--- Any signed-in user may create a patient record. There is no invite/claim
--- flow in this demo — the app auto-creates one demo patient per device on
--- first launch. A real deployment would gate this behind CHW/clinic onboarding.
+-- Any signed-in user may create a patient record, only attributed to
+-- themselves. There is no invite/claim flow in this demo — the app
+-- auto-creates one demo patient per device on first launch. A real
+-- deployment would gate this behind CHW/clinic onboarding.
 create policy "patients insertable by any signed-in user"
   on patients for insert
-  with check (auth.uid() is not null);
+  with check (auth.uid() is not null and created_by = auth.uid());
 
 -- Users can see their own relationship rows (not everyone else's, to avoid
 -- leaking who else has access to a given patient).

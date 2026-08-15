@@ -52,8 +52,13 @@ npm install   # postinstall automatically builds packages/engine to dist/
 ### 2. Create the Supabase project and schema
 
 1. Create a project at supabase.com (free tier).
-2. In the SQL editor, run the two files in `backend/supabase/migrations/` **in
-   order**: `0001_init.sql`, then `0002_storage.sql`.
+2. In the SQL editor, run the three files in `backend/supabase/migrations/`
+   **in order**: `0001_init.sql`, `0002_storage.sql`, `0003_fix_patients_readback.sql`
+   (0003 fixes a real bug: `INSERT ... RETURNING` on `patients` needs the new
+   row to also pass the SELECT policy, which originally required a
+   `patient_relationships` row that can't exist yet for a patient still being
+   created — 0003 adds `created_by` so the creator can read back their own
+   new patient immediately).
 3. Go to Authentication → Providers and enable **Anonymous Sign-Ins** — the
    app signs in anonymously on first launch so RLS has a real `auth.uid()` to
    check against, with no login screen needed for the demo.

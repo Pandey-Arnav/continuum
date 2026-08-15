@@ -45,7 +45,7 @@ export async function ensureDemoSession(): Promise<DemoSession> {
 
   const { data: patient, error: patientErr } = await supabase
     .from("patients")
-    .insert({ display_name: DEMO_PATIENT_NAME })
+    .insert({ display_name: DEMO_PATIENT_NAME, created_by: userId })
     .select()
     .single();
   if (patientErr) throw patientErr;
