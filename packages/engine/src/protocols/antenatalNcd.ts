@@ -80,7 +80,7 @@ const rules: Rule[] = [
     category: "vaginal_bleeding",
     description: "Any reported vaginal bleeding is red.",
     evaluate: (entry): FlagResult | null => {
-      if (entry.value === "present" || entry.value === true || entry.value === "yes") {
+      if (entry.value === "present" || entry.value === "yes") {
         return { flagLevel: "red", flagReason: "Vaginal bleeding reported", ruleId: "anc.symptom.bleeding" };
       }
       return null;
@@ -91,7 +91,7 @@ const rules: Rule[] = [
     category: "reduced_fetal_movement",
     description: "Reduced or absent fetal movement is red.",
     evaluate: (entry): FlagResult | null => {
-      if (entry.value === "present" || entry.value === true || entry.value === "yes") {
+      if (entry.value === "present" || entry.value === "yes") {
         return { flagLevel: "red", flagReason: "Reduced or absent fetal movement reported", ruleId: "anc.symptom.reduced_fetal_movement" };
       }
       return null;
@@ -102,7 +102,7 @@ const rules: Rule[] = [
     category: "severe_swelling",
     description: "Severe swelling of face/hands is amber.",
     evaluate: (entry): FlagResult | null => {
-      if (entry.value === "present" || entry.value === true || entry.value === "yes") {
+      if (entry.value === "present" || entry.value === "yes") {
         return { flagLevel: "amber", flagReason: "Severe swelling of face/hands reported", ruleId: "anc.symptom.severe_swelling" };
       }
       return null;
@@ -113,7 +113,7 @@ const rules: Rule[] = [
     category: "severe_headache",
     description: "Severe/persistent headache with visual disturbance is red (pre-eclampsia warning sign).",
     evaluate: (entry): FlagResult | null => {
-      if (entry.value === "present" || entry.value === true || entry.value === "yes") {
+      if (entry.value === "present" || entry.value === "yes") {
         return { flagLevel: "red", flagReason: "Severe headache with visual disturbance reported", ruleId: "anc.symptom.severe_headache" };
       }
       return null;
