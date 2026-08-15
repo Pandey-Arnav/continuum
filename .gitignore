@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.local
+.expo/
+*.log
+dist/
+build/
+.DS_Store
+app/.expo/
+app/dist/
+packages/engine/dist/

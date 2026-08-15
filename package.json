@@ -1,0 +1,13 @@
+{
+  "name": "continuum",
+  "private": true,
+  "workspaces": [
+    "app",
+    "packages/*"
+  ],
+  "scripts": {
+    "engine:build": "npm run build -w packages/engine",
+    "engine:test": "npm run test -w packages/engine",
+    "app:start": "npm run start -w app"
+  }
+}
