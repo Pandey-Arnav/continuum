@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "tsx src/__tests__/smoke.ts",
+    "test": "tsx src/__tests__/rules.ts && tsx src/__tests__/smoke.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

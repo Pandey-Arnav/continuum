@@ -44,9 +44,10 @@ docs/roadmap.md      The three unbuilt extensions.
 ### 1. Install dependencies (monorepo root)
 
 ```bash
-npm install
-npm run engine:build   # compiles packages/engine to dist/ for the app to import
+npm install   # postinstall automatically builds packages/engine to dist/
 ```
+
+(If you ever edit `packages/engine` while the app is running, re-run `npm run engine:build` to refresh `dist/` — Metro reads the compiled output, not the TypeScript source.)
 
 ### 2. Create the Supabase project and schema
 
@@ -97,10 +98,13 @@ hand-authored JSON) so the timeline is never empty.
 
 ## What to manually verify per phase
 
-**Core engine:** `cd packages/engine && npm test` — runs both scenarios
-through the identical `runPipeline()` with mock providers and asserts each
-produces structured entries and at least one red flag. This is the
-single most important check: it's the literal proof of the one-engine claim.
+**Core engine:** `cd packages/engine && npm test` runs two suites:
+`rules.ts` checks every threshold in both protocols directly against
+`compare()` (25 assertions — e.g. systolic BP 139 vs. 140 vs. 160), and
+`smoke.ts` runs both scenarios through the identical `runPipeline()` with
+mock providers end to end. The second is the literal proof of the
+one-engine claim; the first is direct coverage of the part of the system
+that's explicitly never allowed to be a model.
 
 **Scenario A (CHW voice visit):** open the "CHW Visit" tab, pick a sample
 note (or record real audio), run the pipeline, confirm structured

@@ -6,6 +6,7 @@
     "packages/*"
   ],
   "scripts": {
+    "postinstall": "npm run engine:build",
     "engine:build": "npm run build -w packages/engine",
     "engine:test": "npm run test -w packages/engine",
     "app:start": "npm run start -w app"
