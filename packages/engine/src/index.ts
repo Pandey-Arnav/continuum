@@ -7,6 +7,7 @@ export * from "./pipeline";
 export * from "./providers/types";
 export { MockSTTProvider, MockOCRProvider, MockLLMProvider } from "./providers/mock";
 export { createSarvamSTTProvider } from "./providers/sarvam";
+export { createElevenLabsSTTProvider } from "./providers/elevenlabs";
 export { createGoogleVisionOCRProvider } from "./providers/googleVision";
 export { createClaudeLLMProvider } from "./providers/claude";
 export { antenatalNcdProtocol, antenatalNcdSchemaCategories } from "./protocols/antenatalNcd";

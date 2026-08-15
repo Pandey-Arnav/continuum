@@ -7,6 +7,7 @@ export const env = {
   supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "",
   anthropicApiKey: process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY ?? "",
   sarvamApiKey: process.env.EXPO_PUBLIC_SARVAM_API_KEY ?? "",
+  elevenlabsApiKey: process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY ?? "",
   googleVisionApiKey: process.env.EXPO_PUBLIC_GOOGLE_VISION_API_KEY ?? "",
 };
 

@@ -77,14 +77,20 @@ Edit `app/.env`:
 |---|---|---|
 | `EXPO_PUBLIC_SUPABASE_URL` | **Yes** | App shows a setup screen |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | **Yes** | App shows a setup screen |
-| `EXPO_PUBLIC_ANTHROPIC_API_KEY` | No | `structure()`/`handoff()` use a heuristic mock extractor instead of Claude |
-| `EXPO_PUBLIC_SARVAM_API_KEY` | No | Voice capture uses a canned sample transcript instead of real Hindi/Marathi STT |
+| `EXPO_PUBLIC_ANTHROPIC_API_KEY` | No | `structure()`/`handoff()` use a heuristic mock extractor instead of Claude — real understanding of arbitrary spoken/written content needs this |
+| `EXPO_PUBLIC_SARVAM_API_KEY` | No | Voice capture uses a canned sample transcript instead of real Hindi/Marathi→English STT |
+| `EXPO_PUBLIC_ELEVENLABS_API_KEY` | No | Alternative to Sarvam (used only if Sarvam's key isn't set). Transcribes but does **not** translate — pair with an Anthropic key so `structure()` can read the non-English transcript directly |
 | `EXPO_PUBLIC_GOOGLE_VISION_API_KEY` | No | Photo capture uses a canned sample discharge-sheet text instead of real OCR |
 
 The app is **mock-first**: with only the two Supabase variables set, every
 scenario runs end to end (sample voice note or sample discharge sheet →
 structured → flagged → handed off → saved to the real Supabase-backed
-timeline) with zero other API keys. Each of the three optional providers
+timeline) with zero other API keys. **But recording your own real voice note
+and having it actually transcribed/understood requires real keys** — without
+`EXPO_PUBLIC_SARVAM_API_KEY` or `EXPO_PUBLIC_ELEVENLABS_API_KEY`, the mock STT
+provider ignores what you actually said and returns a canned transcript;
+without `EXPO_PUBLIC_ANTHROPIC_API_KEY`, extraction is regex/keyword matching
+tuned to the two demo protocols, not general understanding. Each provider
 upgrades independently — add one key at a time with no code changes.
 
 ### 4. Run it
