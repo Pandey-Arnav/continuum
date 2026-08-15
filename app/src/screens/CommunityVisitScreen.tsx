@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useRef, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Audio } from "expo-av";
 import * as Crypto from "expo-crypto";
 import {
@@ -9,12 +9,20 @@ import {
   StructuredEntry,
   antenatalNcdProtocol,
   antenatalNcdSchemaCategories,
+  highestFlagLevel,
   runPipeline,
 } from "@continuum/engine";
 import { sttProvider, llmProvider, usingMocks } from "../lib/providers";
 import { supabase } from "../lib/supabase";
 import { insertEntryFromPipeline } from "../lib/entries";
+import { haptics } from "../lib/haptics";
 import { FlagBadge } from "../components/FlagBadge";
+import { Button } from "../components/Button";
+import { Card } from "../components/Card";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { SegmentedControl } from "../components/SegmentedControl";
+import { PipelineSteps } from "../components/PipelineSteps";
+import { colors, spacing, typography, PIPELINE_STAGES } from "../theme";
 
 const SAMPLE_NOTES = [
   {
@@ -34,8 +42,10 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const [selectedSample, setSelectedSample] = useState(0);
-  const [useSample, setUseSample] = useState(true);
+  const [captureMode, setCaptureMode] = useState<"sample" | "record">("sample");
   const [running, setRunning] = useState(false);
+  const [stepStatus, setStepStatus] = useState(-1);
+  const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [result, setResult] = useState<{
     rawCapture: RawCapture;
     structuredEntries: StructuredEntry[];
@@ -44,6 +54,8 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  const useSample = captureMode === "sample";
 
   async function startRecording() {
     try {
@@ -55,10 +67,12 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording: rec } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       setRecording(rec);
-      setUseSample(false);
+      setCaptureMode("record");
       setResult(null);
       setSaved(false);
+      haptics.medium();
     } catch (e) {
+      haptics.error();
       Alert.alert("Could not start recording", String(e));
     }
   }
@@ -69,12 +83,26 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     const uri = recording.getURI();
     setRecordedUri(uri);
     setRecording(null);
+    haptics.light();
+  }
+
+  function beginStepAnimation() {
+    setStepStatus(0);
+    stepTimer.current = setInterval(() => {
+      setStepStatus((s) => (s < PIPELINE_STAGES.length - 1 ? s + 1 : s));
+    }, 420);
+  }
+
+  function endStepAnimation(finalStatus: number) {
+    if (stepTimer.current) clearInterval(stepTimer.current);
+    setStepStatus(finalStatus);
   }
 
   async function runVisit() {
     setRunning(true);
     setResult(null);
     setSaved(false);
+    beginStepAnimation();
     try {
       const sample = SAMPLE_NOTES[selectedSample];
       const pipelineResult = await runPipeline({
@@ -95,7 +123,13 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
         llmProvider,
       });
       setResult(pipelineResult);
+      endStepAnimation(PIPELINE_STAGES.length);
+      const worst = highestFlagLevel(pipelineResult.flaggedEntries);
+      if (worst === "red") haptics.warning();
+      else haptics.success();
     } catch (e) {
+      endStepAnimation(-1);
+      haptics.error();
       Alert.alert("Pipeline failed", String(e));
     } finally {
       setRunning(false);
@@ -121,90 +155,121 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
         mediaRef,
       });
       setSaved(true);
+      haptics.success();
     } catch (e) {
+      haptics.error();
       Alert.alert("Save failed", String(e));
     } finally {
       setSaving(false);
     }
   }
 
+  const canRun = useSample || !!recordedUri;
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
-      <Text style={styles.title}>🎙️ Community Health Worker Visit</Text>
-      <Text style={styles.subtitle}>
-        Capture a voice note → structure against the antenatal/NCD protocol → compare → flag → handoff to the
-        supervising health worker.
-      </Text>
+      <ScreenHeader
+        icon="🎙️"
+        iconTint={colors.accentSoft}
+        title="CHW Visit"
+        subtitle="Capture a voice note → structure against the antenatal/NCD protocol → compare → flag → handoff to the supervising health worker."
+      />
+
       {usingMocks.stt && (
-        <Text style={styles.mockNote}>Using mock speech-to-text (no SARVAM_API_KEY set) — content comes from the sample note text.</Text>
+        <View style={styles.mockNote}>
+          <Text style={styles.mockNoteText}>Using mock speech-to-text — no SARVAM_API_KEY set. Content comes from the sample note text.</Text>
+        </View>
       )}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>1. Capture</Text>
-        <View style={styles.row}>
-          <Pressable style={[styles.pill, useSample && styles.pillActive]} onPress={() => setUseSample(true)}>
-            <Text style={[styles.pillText, useSample && styles.pillTextActive]}>Use sample note</Text>
-          </Pressable>
-          <Pressable style={[styles.pill, !useSample && styles.pillActive]} onPress={() => setUseSample(false)}>
-            <Text style={[styles.pillText, !useSample && styles.pillTextActive]}>Record real audio</Text>
-          </Pressable>
-        </View>
+      <Text style={styles.sectionLabel}>1 · Capture</Text>
+      <Card style={styles.section}>
+        <SegmentedControl
+          value={captureMode}
+          onChange={(v) => setCaptureMode(v)}
+          options={[
+            { value: "sample", label: "Use sample note" },
+            { value: "record", label: "Record real audio" },
+          ]}
+        />
 
         {useSample ? (
-          <View style={{ marginTop: 10 }}>
+          <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
             {SAMPLE_NOTES.map((s, i) => (
-              <Pressable key={i} style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]} onPress={() => setSelectedSample(i)}>
-                <Text style={styles.sampleLabel}>{s.label}</Text>
-                <Text style={styles.sampleText}>{s.text}</Text>
+              <Pressable
+                key={i}
+                style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]}
+                onPress={() => {
+                  haptics.tap();
+                  setSelectedSample(i);
+                }}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: selectedSample === i }}
+                accessibilityLabel={s.label}
+              >
+                <View style={[styles.radio, selectedSample === i && styles.radioActive]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sampleLabel}>{s.label}</Text>
+                  <Text style={styles.sampleText}>{s.text}</Text>
+                </View>
               </Pressable>
             ))}
           </View>
         ) : (
-          <View style={{ marginTop: 10, alignItems: "flex-start" }}>
+          <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
             {!recording ? (
-              <Pressable style={styles.recordButton} onPress={startRecording}>
-                <Text style={styles.recordButtonText}>● Start recording</Text>
-              </Pressable>
+              <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
             ) : (
-              <Pressable style={[styles.recordButton, styles.recordButtonStop]} onPress={stopRecording}>
-                <Text style={styles.recordButtonText}>■ Stop recording</Text>
-              </Pressable>
+              <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
             )}
-            {recordedUri && !recording && <Text style={styles.recordedNote}>Recorded ✓ ready to run</Text>}
+            {recording && <Text style={styles.recordingNote}>● Recording…</Text>}
+            {recordedUri && !recording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
           </View>
         )}
-      </View>
+      </Card>
 
-      <Pressable
-        style={[styles.runButton, (running || (!useSample && !recordedUri)) && styles.runButtonDisabled]}
+      <Button
+        label={running ? "Running pipeline…" : "Run capture → structure → compare → flag → handoff"}
         onPress={runVisit}
-        disabled={running || (!useSample && !recordedUri)}
-      >
-        {running ? <ActivityIndicator color="#fff" /> : <Text style={styles.runButtonText}>Run capture → structure → compare → flag → handoff</Text>}
-      </Pressable>
+        loading={running}
+        disabled={!canRun}
+      />
+
+      {(running || result) && (
+        <View style={styles.stepsWrap}>
+          <PipelineSteps status={stepStatus} />
+        </View>
+      )}
 
       {result && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>2. Structured + Flagged</Text>
-          {result.flaggedEntries.map((f, i) => (
-            <View key={i} style={styles.factRow}>
-              <FlagBadge level={f.flagLevel} compact />
-              <View style={{ flex: 1, marginLeft: 8 }}>
-                <Text style={styles.factCategory}>
-                  {f.category.replace(/_/g, " ")}: {String(f.value)} {f.unit ?? ""}
-                </Text>
-                <Text style={styles.factReason}>{f.flagReason}</Text>
+        <>
+          <Text style={styles.sectionLabel}>2 · Structured + Flagged</Text>
+          <Card style={styles.section}>
+            {result.flaggedEntries.map((f, i) => (
+              <View key={i} style={[styles.factRow, i > 0 && styles.factRowBorder]}>
+                <FlagBadge level={f.flagLevel} compact />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.factCategory}>
+                    {f.category.replace(/_/g, " ")}: {String(f.value)} {f.unit ?? ""}
+                  </Text>
+                  <Text style={styles.factReason}>{f.flagReason}</Text>
+                </View>
               </View>
-            </View>
-          ))}
+            ))}
+          </Card>
 
-          <Text style={styles.sectionTitle}>3. Handoff (to supervising health worker)</Text>
-          <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
+          <Text style={styles.sectionLabel}>3 · Handoff (to supervising health worker)</Text>
+          <Card style={styles.section} accentColor={colors.accent}>
+            <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
+          </Card>
 
-          <Pressable style={[styles.runButton, saved && styles.runButtonDisabled]} onPress={save} disabled={saving || saved}>
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.runButtonText}>{saved ? "Saved to timeline ✓" : "Save to timeline"}</Text>}
-          </Pressable>
-        </View>
+          <Button
+            label={saved ? "✓ Saved to timeline" : "Save to timeline"}
+            onPress={save}
+            loading={saving}
+            disabled={saved}
+            variant={saved ? "secondary" : "primary"}
+          />
+        </>
       )}
     </ScrollView>
   );
@@ -224,30 +289,39 @@ async function tryUploadAudio(patientId: string, uri: string): Promise<string | 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F8FAFC", paddingHorizontal: 16, paddingTop: 16 },
-  title: { fontSize: 20, fontWeight: "700", color: "#0F172A" },
-  subtitle: { fontSize: 13, color: "#64748B", marginTop: 4 },
-  mockNote: { fontSize: 12, color: "#B45309", marginTop: 8, backgroundColor: "#FEF3C7", padding: 8, borderRadius: 8 },
-  section: { marginTop: 18 },
-  sectionTitle: { fontSize: 14, fontWeight: "700", color: "#0F172A", marginBottom: 8 },
-  row: { flexDirection: "row", gap: 8 },
-  pill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: "#E2E8F0" },
-  pillActive: { backgroundColor: "#0F172A" },
-  pillText: { fontSize: 12, fontWeight: "600", color: "#334155" },
-  pillTextActive: { color: "#fff" },
-  sampleCard: { borderWidth: 1, borderColor: "#E2E8F0", borderRadius: 10, padding: 10, marginBottom: 8, backgroundColor: "#fff" },
-  sampleCardActive: { borderColor: "#0F172A", backgroundColor: "#F1F5F9" },
-  sampleLabel: { fontSize: 12, fontWeight: "700", color: "#0F172A" },
-  sampleText: { fontSize: 12, color: "#475569", marginTop: 4 },
-  recordButton: { backgroundColor: "#DC2626", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
-  recordButtonStop: { backgroundColor: "#334155" },
-  recordButtonText: { color: "#fff", fontWeight: "700" },
-  recordedNote: { marginTop: 8, color: "#166534", fontSize: 12, fontWeight: "600" },
-  runButton: { backgroundColor: "#0F172A", paddingVertical: 14, borderRadius: 10, alignItems: "center", marginTop: 16 },
-  runButtonDisabled: { opacity: 0.5 },
-  runButtonText: { color: "#fff", fontWeight: "700" },
-  factRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 10 },
-  factCategory: { fontSize: 13, fontWeight: "600", color: "#0F172A" },
-  factReason: { fontSize: 12, color: "#475569" },
-  handoffText: { fontSize: 13, color: "#1E293B", backgroundColor: "#fff", padding: 12, borderRadius: 10, borderWidth: 1, borderColor: "#E2E8F0" },
+  container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
+  mockNote: { backgroundColor: "#FDF3E0", borderRadius: 10, padding: spacing.sm, marginBottom: spacing.lg },
+  mockNoteText: { fontSize: 12, color: "#9A5B06", fontWeight: "600" },
+  sectionLabel: { ...typography.label, marginBottom: spacing.sm, marginTop: spacing.xl },
+  section: { marginBottom: 0 },
+  sampleCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    padding: spacing.sm,
+    backgroundColor: colors.bg,
+  },
+  sampleCardActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  radio: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: colors.borderStrong,
+    marginTop: 2,
+  },
+  radioActive: { borderColor: colors.accent, backgroundColor: colors.accent },
+  sampleLabel: { fontSize: 12.5, fontWeight: "700", color: colors.ink },
+  sampleText: { fontSize: 12, color: colors.inkMuted, marginTop: 3, lineHeight: 16 },
+  recordingNote: { marginTop: spacing.sm, color: colors.danger, fontSize: 12, fontWeight: "700" },
+  recordedNote: { marginTop: spacing.sm, color: colors.flag.green.fg, fontSize: 12, fontWeight: "700" },
+  stepsWrap: { marginTop: spacing.lg, paddingHorizontal: spacing.xs },
+  factRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: spacing.sm },
+  factRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
+  factCategory: { fontSize: 13, fontWeight: "700", color: colors.ink },
+  factReason: { fontSize: 12, color: colors.inkMuted, marginTop: 2 },
+  handoffText: { fontSize: 13.5, color: colors.ink, lineHeight: 20 },
 });

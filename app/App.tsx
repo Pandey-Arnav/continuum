@@ -7,8 +7,16 @@ import { SetupNeededScreen } from "./src/screens/SetupNeededScreen";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { CommunityVisitScreen } from "./src/screens/CommunityVisitScreen";
 import { DischargeScreen } from "./src/screens/DischargeScreen";
+import { colors, radius, shadow, spacing } from "./src/theme";
+import { haptics } from "./src/lib/haptics";
 
 type Tab = "dashboard" | "chw" | "discharge";
+
+const TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: "dashboard", label: "Timeline", icon: "🗂️" },
+  { key: "chw", label: "CHW Visit", icon: "🎙️" },
+  { key: "discharge", label: "Discharge", icon: "📄" },
+];
 
 export default function App() {
   const [session, setSession] = useState<DemoSession | null>(null);
@@ -41,8 +49,11 @@ export default function App() {
   if (!session) {
     return (
       <SafeAreaView style={[styles.flex, styles.center]}>
-        <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 12, color: "#64748B" }}>Setting up demo session…</Text>
+        <View style={styles.loadingMark}>
+          <Text style={styles.loadingMarkText}>C</Text>
+        </View>
+        <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 18 }} />
+        <Text style={styles.loadingText}>Setting up your demo session…</Text>
       </SafeAreaView>
     );
   }
@@ -56,9 +67,18 @@ export default function App() {
         {tab === "discharge" && <DischargeScreen patientId={session.patientId} userId={session.userId} />}
       </View>
       <View style={styles.tabBar}>
-        <TabButton label="Timeline" icon="🗂️" active={tab === "dashboard"} onPress={() => setTab("dashboard")} />
-        <TabButton label="CHW Visit" icon="🎙️" active={tab === "chw"} onPress={() => setTab("chw")} />
-        <TabButton label="Discharge" icon="📄" active={tab === "discharge"} onPress={() => setTab("discharge")} />
+        {TABS.map((t) => (
+          <TabButton
+            key={t.key}
+            label={t.label}
+            icon={t.icon}
+            active={tab === t.key}
+            onPress={() => {
+              if (tab !== t.key) haptics.tap();
+              setTab(t.key);
+            }}
+          />
+        ))}
       </View>
     </SafeAreaView>
   );
@@ -66,25 +86,55 @@ export default function App() {
 
 function TabButton({ label, icon, active, onPress }: { label: string; icon: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable style={styles.tabButton} onPress={onPress}>
-      <Text style={{ fontSize: 18, opacity: active ? 1 : 0.4 }}>{icon}</Text>
+    <Pressable
+      style={({ pressed }) => [styles.tabButton, pressed && styles.tabButtonPressed]}
+      onPress={onPress}
+      hitSlop={6}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={label}
+    >
+      <View style={[styles.tabIconWrap, active && styles.tabIconWrapActive]}>
+        <Text style={{ fontSize: 17, opacity: active ? 1 : 0.55 }}>{icon}</Text>
+      </View>
       <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: "#F8FAFC" },
+  flex: { flex: 1, backgroundColor: colors.bg },
   center: { alignItems: "center", justifyContent: "center" },
+  loadingMark: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    ...(shadow.md as object),
+  },
+  loadingMarkText: { color: colors.onPrimary, fontSize: 24, fontWeight: "800" },
+  loadingText: { marginTop: 14, color: colors.inkMuted, fontSize: 13, fontWeight: "500" },
   tabBar: {
     flexDirection: "row",
     borderTopWidth: 1,
-    borderTopColor: "#E2E8F0",
-    backgroundColor: "#fff",
-    paddingBottom: 8,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingBottom: 10,
     paddingTop: 8,
+    paddingHorizontal: spacing.sm,
   },
-  tabButton: { flex: 1, alignItems: "center", gap: 2 },
-  tabLabel: { fontSize: 11, color: "#94A3B8", fontWeight: "600" },
-  tabLabelActive: { color: "#0F172A" },
+  tabButton: { flex: 1, alignItems: "center", gap: 3 },
+  tabButtonPressed: { opacity: 0.6 },
+  tabIconWrap: {
+    width: 40,
+    height: 30,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabIconWrapActive: { backgroundColor: colors.primarySoft },
+  tabLabel: { fontSize: 10.5, color: colors.inkFaint, fontWeight: "700" },
+  tabLabelActive: { color: colors.primary },
 });
