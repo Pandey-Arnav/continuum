@@ -40,6 +40,8 @@ const SAMPLE_SHEETS = [
   },
 ];
 
+const SEVERITY_RANK: Record<string, number> = { red: 2, amber: 1, green: 0 };
+
 export function DischargeScreen({ patientId, userId }: { patientId: string; userId: string }) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [selectedSample, setSelectedSample] = useState(0);
@@ -127,8 +129,16 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
         recipientRole: "patient",
         llmProvider,
       });
-      setResult(pipelineResult);
-      setOriginalFacts(pipelineResult.flaggedEntries.map((fact) => ({ ...fact })));
+      const order = pipelineResult.flaggedEntries
+        .map((_, i) => i)
+        .sort((a, b) => SEVERITY_RANK[pipelineResult.flaggedEntries[b].flagLevel] - SEVERITY_RANK[pipelineResult.flaggedEntries[a].flagLevel]);
+      const sortedResult = {
+        ...pipelineResult,
+        structuredEntries: order.map((i) => pipelineResult.structuredEntries[i]),
+        flaggedEntries: order.map((i) => pipelineResult.flaggedEntries[i]),
+      };
+      setResult(sortedResult);
+      setOriginalFacts(sortedResult.flaggedEntries.map((fact) => ({ ...fact })));
       setConfirmedFacts(new Set());
       endStepAnimation(PIPELINE_STAGES.length);
       const worst = highestFlagLevel(pipelineResult.flaggedEntries);
@@ -206,6 +216,12 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
     }
   }
 
+  const captureModeLabel = useSample
+    ? { text: "Sample data — not a live document", tone: "neutral" as const }
+    : usingMocks.ocr
+    ? { text: "Demo mode — no live OCR configured", tone: "amber" as const }
+    : { text: "Live OCR", tone: "green" as const };
+
   const correctionReasonsComplete = Object.values(correctionReasons).every((reason) => reason.trim().length >= 3);
   const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length && correctionReasonsComplete);
 
@@ -252,16 +268,6 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
         title="Discharge Sheet"
         subtitle="Photograph a discharge summary → OCR → structure against the discharge protocol → compare → flag → handoff to the patient."
       />
-
-      {usingMocks.ocr && (
-        <View style={styles.mockNote}>
-          <Text style={styles.mockNoteIcon}>ℹ️</Text>
-          <Text style={styles.mockNoteText}>
-            Mock provider mode is active. Deploy the secure provider function and enable the proxy to process real
-            photographs.
-          </Text>
-        </View>
-      )}
 
       <View style={styles.flow}>
         <SectionCard index={1} title="Capture">
@@ -312,10 +318,35 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
           ) : (
             imageUri && <Image source={{ uri: imageUri }} style={styles.previewImage} resizeMode="contain" />
           )}
+
+          <View style={styles.modeRow}>
+            <View style={[styles.modeBadge, styles[`modeBadge_${captureModeLabel.tone}`]]}>
+              <Text style={[styles.modeBadgeText, styles[`modeBadgeText_${captureModeLabel.tone}`]]}>{captureModeLabel.text}</Text>
+            </View>
+          </View>
+
+          {!useSample && usingMocks.ocr && (
+            <View style={styles.mockNote}>
+              <Text style={styles.mockNoteIcon}>ℹ️</Text>
+              <Text style={styles.mockNoteText}>
+                No live OCR provider is configured, so this photo can&apos;t actually be read yet. Running the
+                pipeline on it will honestly report that nothing was extracted — deploy the secure provider
+                function to process real photographs, or use a sample sheet to see the full flow.
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.expectedOutput}>
+            <Text style={styles.expectedOutputTitle}>This will extract, in order of urgency</Text>
+            <Text style={styles.expectedOutputText}>
+              Red-flag symptoms to watch for · medication changes · follow-up appointment timing · the discharge
+              diagnosis note — each traced back to the exact line it came from.
+            </Text>
+          </View>
         </SectionCard>
 
         <Button
-          label={running ? "Running pipeline…" : "▶ Run the pipeline"}
+          label={running ? "Running pipeline…" : useSample ? "▶ Process sample discharge sheet" : "▶ Process captured photo"}
           onPress={runDischarge}
           loading={running}
           disabled={!useSample && !imageUri}
@@ -353,8 +384,50 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
                 ))}
               </SectionCard>
 
-              <SectionCard index={3} title="Handoff · to patient, plain language" tint={colors.primarySoft}>
-                <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
+              <SectionCard index={3} title="Care summary · for the patient" tint={colors.primarySoft}>
+                {(() => {
+                  const changed = result.flaggedEntries.filter((f) => f.category === "medication_change" || f.category === "diagnosis_note");
+                  const attention = result.flaggedEntries.filter((f) => f.flagLevel === "red" || f.flagLevel === "amber");
+                  const headline = attention[0] ?? result.flaggedEntries[0];
+                  return (
+                    <View style={{ gap: spacing.md }}>
+                      {changed.length > 0 && (
+                        <View>
+                          <Text style={styles.summaryLabel}>What changed</Text>
+                          {changed.map((f, i) => (
+                            <Text key={i} style={styles.summaryItem}>· {String(f.value)}</Text>
+                          ))}
+                        </View>
+                      )}
+                      <View>
+                        <Text style={styles.summaryLabel}>What needs attention</Text>
+                        {attention.length > 0 ? (
+                          attention.map((f, i) => (
+                            <Text key={i} style={styles.summaryItem}>
+                              <Text style={{ fontWeight: "800" }}>{f.flagLevel === "red" ? "Urgent — " : "Review — "}</Text>
+                              {String(f.value)}
+                            </Text>
+                          ))
+                        ) : (
+                          <Text style={styles.summaryItem}>Nothing above informational — everything here is recorded as routine.</Text>
+                        )}
+                      </View>
+                      {headline && (
+                        <View>
+                          <Text style={styles.summaryLabel}>Why it was flagged</Text>
+                          <Text style={styles.summaryItem}>{headline.flagReason}</Text>
+                        </View>
+                      )}
+                      <View>
+                        <Text style={styles.summaryLabel}>What to understand next</Text>
+                        <Text style={styles.summaryItem}>
+                          This is a record summary, not a diagnosis — use your care team's approved contact or
+                          emergency pathway if anything above concerns you.
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })()}
               </SectionCard>
 
               <VerificationPanel
@@ -424,6 +497,25 @@ const styles = StyleSheet.create({
   },
   mockNoteIcon: { fontSize: 13 },
   mockNoteText: { flex: 1, fontSize: 12, color: colors.flag.amber.fg, fontWeight: "600", lineHeight: 16 },
+  modeRow: { flexDirection: "row", marginTop: spacing.md },
+  modeBadge: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
+  modeBadge_neutral: { backgroundColor: colors.surfaceMuted, borderColor: colors.border },
+  modeBadge_amber: { backgroundColor: colors.flag.amber.bg, borderColor: colors.flag.amber.border },
+  modeBadge_green: { backgroundColor: colors.flag.green.bg, borderColor: colors.flag.green.border },
+  modeBadgeText: { fontSize: 10.5, fontWeight: "800" },
+  modeBadgeText_neutral: { color: colors.inkMuted },
+  modeBadgeText_amber: { color: colors.flag.amber.fg },
+  modeBadgeText_green: { color: colors.flag.green.fg },
+  expectedOutput: {
+    marginTop: spacing.md,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceMuted,
+  },
+  expectedOutputTitle: { fontSize: 11, fontWeight: "800", color: colors.inkMuted, textTransform: "uppercase", letterSpacing: 0.3 },
+  expectedOutputText: { fontSize: 12, color: colors.inkMuted, lineHeight: 17, marginTop: 3 },
+  summaryLabel: { fontSize: 11, fontWeight: "800", color: colors.inkFaint, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 },
+  summaryItem: { fontSize: 13, color: colors.ink, lineHeight: 19 },
   row: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
   pill: {
     paddingHorizontal: 12,
@@ -463,6 +555,5 @@ const styles = StyleSheet.create({
   factRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   factCategory: { fontSize: 13, fontWeight: "700", color: colors.ink },
   factReason: { fontSize: 12, color: colors.inkMuted, marginTop: 2 },
-  handoffText: { fontSize: 13.5, color: colors.ink, lineHeight: 20 },
   emptyResultText: { fontSize: 13, color: colors.flag.amber.fg, lineHeight: 19 },
 });
