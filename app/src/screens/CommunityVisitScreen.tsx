@@ -39,14 +39,43 @@ import { colors, spacing, CATEGORY_ICON, PIPELINE_STAGES } from "../theme";
 const SAMPLE_NOTES = [
   {
     label: "Antenatal — danger signs (Hindi)",
+    lang: "hi",
     text: "Aaj Meena ki home visit ki. BP 148 over 96 tha. Usne bataya ki severe headache hai aur vision blurry hai. Bleeding bhi thoda hua hai.",
     translated:
       "Did Meena's home visit today. BP was 148 over 96. She reported severe headache and blurry vision. There was also some bleeding.",
   },
   {
     label: "NCD screening — normal (Marathi)",
+    lang: "mr",
     text: "Rajesh cha NCD screening kela. Blood sugar 130 hota, fasting nantar. Weight 74 kg. Kuthlihi tak nahi.",
     translated: "Did Rajesh's NCD screening. Blood sugar was 130 after fasting. Weight 74 kg. No complaints.",
+  },
+  {
+    label: "Antenatal — mild concern (Swahili)",
+    lang: "sw",
+    text: "Nilimtembelea Amina nyumbani leo. Shinikizo la damu lilikuwa 142 juu ya 88. Alisema ana maumivu ya kichwa kidogo, si makali. Uzito wake ni kilo 65.",
+    translated:
+      "Visited Amina at home today. Blood pressure was 142 over 88. She said she has a mild headache, not severe. Her weight is 65 kg.",
+  },
+  {
+    label: "NCD screening — danger (Bengali)",
+    lang: "bn",
+    text: "আজ করিমের এনসিডি স্ক্রিনিং করেছি। উপবাসের পর রক্তে শর্করা ছিল ২২০। ওজন ছিল ৮২ কেজি। আর কোনো উপসর্গ জানাননি।",
+    translated:
+      "Did Karim's NCD screening today. Blood sugar was 220 after fasting. Weight was 82 kg. No other symptoms reported.",
+  },
+  {
+    label: "Antenatal — danger signs (Tamil)",
+    lang: "ta",
+    text: "இன்று லதாவின் வீட்டு வருகையை மேற்கொண்டேன். இரத்த அழுத்தம் 152/98 இருந்தது. கடுமையான தலைவலியும் பார்வை மங்கலும் இருப்பதாகக் கூறினார்.",
+    translated: "Did Latha's home visit today. Blood pressure was 152/98. She reported severe headache and blurred vision.",
+  },
+  {
+    label: "Antenatal — routine, normal (Spanish)",
+    lang: "es",
+    text: "Visité a Rosa en su casa hoy. La presión arterial fue 118 sobre 76, dentro del rango normal. Temperatura normal. Peso 60 kilos. Sin quejas.",
+    translated:
+      "Visited Rosa at home today. Blood pressure was 118 over 76, within normal range. Temperature normal. Weight 60 kg. No complaints.",
   },
 ];
 
@@ -135,7 +164,7 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
         input: {
           kind: "voice",
           audio: useSample
-            ? { simulatedText: sample.text, simulatedTranslatedText: sample.translated, simulatedLanguage: "hi" }
+            ? { simulatedText: sample.text, simulatedTranslatedText: sample.translated, simulatedLanguage: sample.lang }
             : { uri: recordedUri ?? undefined, languageHint: languageCode },
           sttProvider,
         },

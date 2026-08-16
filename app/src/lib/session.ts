@@ -124,19 +124,45 @@ async function signInAnonymously() {
 
 const SCENARIO_A_SAMPLES = [
   {
+    lang: "hi",
     text: "Aaj Sunita ki home visit ki. BP 150 over 95 tha. Usne bataya ki severe headache hai aur vision thoda blurry hai. Baby ka movement bhi kam mehsoos ho raha hai. Weight 62 kg record kiya.",
     translated:
       "Did Sunita's home visit today. BP was 150 over 95. She reported severe headache and slightly blurred vision. Also feeling reduced baby movement. Recorded weight as 62 kg.",
   },
   {
-    text: "Ramesh ka NCD screening kiya. Blood sugar 210 tha fasting ke baad. Koi aur symptom nahi bataya. Weight 78 kg tha.",
+    lang: "mr",
+    text: "Ramesh cha NCD screening kela. Blood sugar 210 hota, fasting nantar. Koi aur symptom nahi bataya. Weight 78 kg hota.",
     translated:
       "Did Ramesh's NCD screening. Blood sugar was 210 after fasting. No other symptoms reported. Weight was 78 kg.",
   },
   {
+    lang: "hi",
     text: "Priya ki routine antenatal check ki. BP 118 over 76 tha, normal range mein. Temperature normal. Weight 58 kg. Koi complaint nahi.",
     translated:
       "Did Priya's routine antenatal check. BP was 118 over 76, within normal range. Temperature normal. Weight 58 kg. No complaints.",
+  },
+  {
+    lang: "sw",
+    text: "Nilimtembelea Amina nyumbani leo. Shinikizo la damu lilikuwa 142 juu ya 88. Alisema ana maumivu ya kichwa kidogo, si makali. Uzito wake ni kilo 65.",
+    translated:
+      "Visited Amina at home today. Blood pressure was 142 over 88. She said she has a mild headache, not severe. Her weight is 65 kg.",
+  },
+  {
+    lang: "bn",
+    text: "আজ করিমের এনসিডি স্ক্রিনিং করেছি। উপবাসের পর রক্তে শর্করা ছিল ২২০। ওজন ছিল ৮২ কেজি। আর কোনো উপসর্গ জানাননি।",
+    translated:
+      "Did Karim's NCD screening today. Blood sugar was 220 after fasting. Weight was 82 kg. No other symptoms reported.",
+  },
+  {
+    lang: "ta",
+    text: "இன்று லதாவின் வீட்டு வருகையை மேற்கொண்டேன். இரத்த அழுத்தம் 152/98 இருந்தது. கடுமையான தலைவலியும் பார்வை மங்கலும் இருப்பதாகக் கூறினார்.",
+    translated: "Did Latha's home visit today. Blood pressure was 152/98. She reported severe headache and blurred vision.",
+  },
+  {
+    lang: "es",
+    text: "Visité a Rosa en su casa hoy. La presión arterial fue 118 sobre 76, dentro del rango normal. Temperatura normal. Peso 60 kilos. Sin quejas.",
+    translated:
+      "Visited Rosa at home today. Blood pressure was 118 over 76, within normal range. Temperature normal. Weight 60 kg. No complaints.",
   },
 ];
 
@@ -151,7 +177,7 @@ async function seedDemoEntries(patientId: string, userId: string) {
     const result = await runPipeline({
       input: {
         kind: "voice",
-        audio: { simulatedText: sample.text, simulatedTranslatedText: sample.translated, simulatedLanguage: "hi" },
+        audio: { simulatedText: sample.text, simulatedTranslatedText: sample.translated, simulatedLanguage: sample.lang },
         sttProvider: MockSTTProvider,
       },
       schemaContext: {
