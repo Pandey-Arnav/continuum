@@ -1,0 +1,2 @@
+[functions.continuum-provider]
+verify_jwt = true

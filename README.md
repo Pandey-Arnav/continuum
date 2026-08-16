@@ -52,8 +52,9 @@ npm install   # postinstall automatically builds packages/engine to dist/
 ### 2. Create the Supabase project and schema
 
 1. Create a project at supabase.com (free tier).
-2. In the SQL editor, run the three files in `backend/supabase/migrations/`
-   **in order**: `0001_init.sql`, `0002_storage.sql`, `0003_fix_patients_readback.sql`
+2. In the SQL editor, run the four files in `backend/supabase/migrations/`
+   **in order**: `0001_init.sql`, `0002_storage.sql`,
+   `0003_fix_patients_readback.sql`, `0004_secure_workflows.sql`
    (0003 fixes a real bug: `INSERT ... RETURNING` on `patients` needs the new
    row to also pass the SELECT policy, which originally required a
    `patient_relationships` row that can't exist yet for a patient still being
@@ -77,26 +78,25 @@ Edit `app/.env`:
 |---|---|---|
 | `EXPO_PUBLIC_SUPABASE_URL` | **Yes** | App shows a setup screen |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | **Yes** | App shows a setup screen |
-| `EXPO_PUBLIC_GEMINI_API_KEY` | No — but recommended | Covers STT + OCR + structuring/handoff all by itself (Gemini is multimodal: audio, image, and text through one key). **Free, no credit card**, from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Used as the fallback for each role below if that role's more specific key isn't set. |
-| `EXPO_PUBLIC_ANTHROPIC_API_KEY` | No | Takes priority over Gemini for `structure()`/`handoff()` if set. Paid, no lasting free tier. |
-| `EXPO_PUBLIC_SARVAM_API_KEY` | No | Takes priority over Gemini/ElevenLabs for STT if set — translates Hindi/Marathi→English directly. |
-| `EXPO_PUBLIC_ELEVENLABS_API_KEY` | No | Takes priority over Gemini for STT if Sarvam's key isn't set. Transcribes but does **not** translate — pair with a real LLM key so `structure()` can read the non-English transcript directly. |
-| `EXPO_PUBLIC_GOOGLE_VISION_API_KEY` | No | Takes priority over Gemini for OCR if set. Free tier exists but requires a Google Cloud billing account (card on file) even to get the key. |
+| `EXPO_PUBLIC_SECURE_PROVIDER_PROXY` | No | `false` keeps the zero-key mock demo; set `true` only after deploying the authenticated provider Edge Function |
+| `EXPO_PUBLIC_DEMO_MODE` | No | `true` auto-seeds the hackathon demo; `false` enables email/password sign-in plus one-time patient access claims |
 
 The app is **mock-first**: with only the two Supabase variables set, every
 scenario runs end to end (sample voice note or sample discharge sheet →
 structured → flagged → handed off → saved to the real Supabase-backed
-timeline) with zero other API keys. **But recording your own real voice note
-or photo and having it actually transcribed/understood requires a real key**
-— without one of the STT keys, the mock provider ignores what you actually
-said/photographed and returns canned demo content; without an LLM key,
-extraction is regex/keyword matching tuned to the two demo protocols, not
-general understanding. **Easiest path: set only `EXPO_PUBLIC_GEMINI_API_KEY`**
-— every role upgrades from mock to real with that one free key. Each
-provider upgrades independently on top of that — add a more specific key
-later with no code changes if you want it.
+timeline) with zero provider keys. Real audio/photo processing uses
+`backend/supabase/functions/continuum-provider`; provider secrets never ship
+in the Expo bundle.
 
-### 4. Run it
+### 4. Optional: deploy real providers securely
+
+From `backend/supabase`, deploy `continuum-provider` and set at least
+`GEMINI_API_KEY` as a Supabase function secret. Optional
+`ANTHROPIC_API_KEY`, `SARVAM_API_KEY`, `ELEVENLABS_API_KEY`, and
+`GOOGLE_VISION_API_KEY` secrets take priority for their role. Then set
+`EXPO_PUBLIC_SECURE_PROVIDER_PROXY=true` in `app/.env`.
+
+### 5. Run it
 
 ```bash
 cd app
@@ -138,18 +138,18 @@ without a visible trigger).
 project seed, an entry saved on one should appear on the other's Timeline
 without a manual refresh.
 
-## Known simplifications (hackathon scope, not production-ready)
+## Production-readiness notes
 
-- **Client-side LLM/OCR/STT calls.** `EXPO_PUBLIC_*` env vars are bundled
-  into the client, so any configured API key is visible to anyone who
-  inspects the app bundle. Production would proxy `structure()`/`handoff()`/
-  provider calls through a Supabase Edge Function holding the key
-  server-side — the engine functions are provider-agnostic by design, so
-  this is a wiring change, not a rewrite.
-- **Single demo account, four roles.** The seeded demo user is attached to
-  the demo patient under all four `recipient_role`s at once so one device
-  can see the whole dashboard. A real deployment would have distinct
-  accounts per role with an invite/claim flow instead of open self-registration.
-- **No patient-claim flow.** Any signed-in user can currently create a
-  `patients` row and attach themselves to it (see RLS policies in
-  `0001_init.sql`) — fine for a single-patient demo, not for multi-tenant use.
+- Provider credentials are held by an authenticated Edge Function.
+- Migration `0004_secure_workflows.sql` adds profiles, one-time patient
+  invites, human review metadata, client-event idempotency, and audit events.
+- `EXPO_PUBLIC_DEMO_MODE=false` enables separate accounts and invite claims;
+  demo mode intentionally keeps the single-device seeded walkthrough.
+- For the first production workspace, create the clinician/CHW account, set
+  its `profiles.app_role` with the Supabase admin/SQL editor, then use the
+  role-checked **Create approved workspace** action. Direct self-attachment
+  to arbitrary patients is denied by migration 0004.
+- Extracted source snippets are checked against raw evidence, and users must
+  verify every fact before saving.
+- See `docs/production-readiness.md` and `docs/safety-and-privacy.md` before
+  handling real patient data or making compliance claims.

@@ -12,7 +12,7 @@ import {
   highestFlagLevel,
   runPipeline,
 } from "@continuum/engine";
-import { ocrProvider, llmProvider, usingMocks } from "../lib/providers";
+import { ocrProvider, llmProvider, providerMode, usingMocks } from "../lib/providers";
 import { supabase } from "../lib/supabase";
 import { insertEntryFromPipeline } from "../lib/entries";
 import { haptics } from "../lib/haptics";
@@ -22,6 +22,7 @@ import { ScreenHeader } from "../components/ScreenHeader";
 import { PipelineSteps } from "../components/PipelineSteps";
 import { SectionCard } from "../components/SectionCard";
 import { FadeSlideIn } from "../components/FadeSlideIn";
+import { VerificationPanel } from "../components/VerificationPanel";
 import { colors, radius, spacing, CATEGORY_ICON, PIPELINE_STAGES } from "../theme";
 
 const SAMPLE_SHEETS = [
@@ -52,6 +53,8 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [confirmedFacts, setConfirmedFacts] = useState<Set<number>>(new Set());
+  const [clientEventId, setClientEventId] = useState<string | null>(null);
 
   async function pickImage(fromCamera: boolean) {
     const perm = fromCamera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -68,6 +71,8 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
       setUseSample(false);
       setResult(null);
       setSaved(false);
+      setConfirmedFacts(new Set());
+      setClientEventId(null);
       haptics.light();
     }
   }
@@ -88,6 +93,8 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
     setRunning(true);
     setResult(null);
     setSaved(false);
+    setConfirmedFacts(new Set());
+    setClientEventId(null);
     beginStepAnimation();
     try {
       const sample = SAMPLE_SHEETS[selectedSample];
@@ -107,6 +114,8 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
         llmProvider,
       });
       setResult(pipelineResult);
+      setConfirmedFacts(new Set());
+      setClientEventId(Crypto.randomUUID());
       endStepAnimation(PIPELINE_STAGES.length);
       const worst = highestFlagLevel(pipelineResult.flaggedEntries);
       if (worst === "red") haptics.warning();
@@ -137,6 +146,13 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
         handoffResult: result.handoffResult,
         protocolId: dischargeRedFlagsProtocol.id,
         mediaRef,
+        clientEventId,
+        review: {
+          status: "human_verified",
+          reviewedBy: userId,
+          reviewedAt: new Date().toISOString(),
+          extractionProvider: providerMode,
+        },
       });
       setSaved(true);
       haptics.success();
@@ -146,6 +162,17 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
     } finally {
       setSaving(false);
     }
+  }
+
+  const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length);
+
+  function toggleConfirmedFact(index: number) {
+    setConfirmedFacts((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
   }
 
   return (
@@ -160,7 +187,10 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
       {usingMocks.ocr && (
         <View style={styles.mockNote}>
           <Text style={styles.mockNoteIcon}>ℹ️</Text>
-          <Text style={styles.mockNoteText}>Using mock OCR — no GOOGLE_VISION_API_KEY set. Content comes from the sample sheet text.</Text>
+          <Text style={styles.mockNoteText}>
+            Mock provider mode is active. Deploy the secure provider function and enable the proxy to process real
+            photographs.
+          </Text>
         </View>
       )}
 
@@ -258,11 +288,13 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
                 <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
               </SectionCard>
 
+              <VerificationPanel facts={result.flaggedEntries} confirmed={confirmedFacts} onToggle={toggleConfirmedFact} />
+
               <Button
-                label={saved ? "✓ Saved to timeline" : "Save to timeline"}
+                label={saved ? "✓ Saved to timeline" : verificationComplete ? "Save verified entry" : "Verify every fact to save"}
                 onPress={save}
                 loading={saving}
-                disabled={saved}
+                disabled={saved || !verificationComplete}
                 variant={saved ? "secondary" : "primary"}
               />
             </View>
@@ -287,7 +319,15 @@ async function tryUploadPhoto(patientId: string, uri: string): Promise<string | 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
+  container: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 1180,
+    alignSelf: "center",
+    backgroundColor: colors.bg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+  },
   flow: { gap: spacing.xl },
   mockNote: {
     flexDirection: "row",
@@ -301,8 +341,15 @@ const styles = StyleSheet.create({
   mockNoteIcon: { fontSize: 13 },
   mockNoteText: { flex: 1, fontSize: 12, color: colors.flag.amber.fg, fontWeight: "600", lineHeight: 16 },
   row: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
-  pill: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-  pillActive: { backgroundColor: colors.ink },
+  pill: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  pillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   pillText: { fontSize: 12, fontWeight: "700", color: colors.inkMuted },
   pillTextActive: { color: "#fff" },
   sampleCard: {
@@ -311,9 +358,9 @@ const styles = StyleSheet.create({
     gap: 10,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
-    padding: spacing.sm,
-    backgroundColor: colors.bg,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
   },
   sampleCardActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   radio: {

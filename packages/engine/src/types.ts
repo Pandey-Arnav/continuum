@@ -28,6 +28,8 @@ export interface StructuredEntry {
   unit?: string;
   timestamp: string; // ISO 8601
   note?: string; // short verbatim snippet this was extracted from, for traceability
+  evidenceVerified?: boolean; // true only when `note` can be found in the raw capture text
+  extractionConfidence?: "high" | "review"; // deterministic provenance quality, never model self-confidence
 }
 
 /** compare()'s verdict for one structured entry. Always traceable to a ruleId. */

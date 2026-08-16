@@ -45,13 +45,13 @@ const styles = StyleSheet.create({
   wrap: { flexWrap: "wrap" },
   chip: {
     paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceMuted,
+    paddingVertical: 10,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: colors.surfaceMuted,
+    borderColor: colors.borderStrong,
   },
-  chipActive: { backgroundColor: colors.ink, borderColor: colors.ink },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   text: { fontSize: 12.5, fontWeight: "700", color: colors.inkMuted },
   textActive: { color: "#FFFFFF" },
 });

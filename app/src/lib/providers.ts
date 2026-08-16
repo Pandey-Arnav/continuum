@@ -1,43 +1,51 @@
-// Wires up real vs. mock providers. Each of STT/OCR/LLM falls back to its
-// mock independently, so the app runs fully offline with zero keys, and
-// upgrades piecemeal as keys are added — no code changes required either way.
 import {
   MockLLMProvider,
   MockOCRProvider,
   MockSTTProvider,
-  createClaudeLLMProvider,
-  createElevenLabsSTTProvider,
-  createGeminiLLMProvider,
-  createGeminiOCRProvider,
-  createGeminiSTTProvider,
-  createGoogleVisionOCRProvider,
-  createSarvamSTTProvider,
+  ProviderProxyOperation,
+  createRemoteLLMProvider,
+  createRemoteOCRProvider,
+  createRemoteSTTProvider,
 } from "@continuum/engine";
 import type { LLMProvider, OCRProvider, STTProvider } from "@continuum/engine";
 import { env } from "./env";
+import { supabase } from "./supabase";
 
-// Each role prefers a purpose-built provider if its key is set, then falls
-// back to Gemini (one key covers all three roles — audio, image, and text
-// all go through the same multimodal API), then the mock. Setting only
-// EXPO_PUBLIC_GEMINI_API_KEY is enough to get every role running for real.
-export const sttProvider: STTProvider = env.sarvamApiKey
-  ? createSarvamSTTProvider(env.sarvamApiKey) // translates Hindi/Marathi -> English directly, which the mock structure() heuristic depends on
-  : env.elevenlabsApiKey
-  ? createElevenLabsSTTProvider(env.elevenlabsApiKey) // transcribes only, no translation — pair with a real LLM key
-  : env.geminiApiKey
-  ? createGeminiSTTProvider(env.geminiApiKey)
+async function invokeSecureProvider<T>(
+  operation: ProviderProxyOperation,
+  payload: Record<string, unknown>
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const request = supabase.functions.invoke("continuum-provider", {
+        body: { operation, ...payload },
+      });
+      const { data, error } = await Promise.race([
+        request,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Secure provider request timed out")), 45_000)),
+      ]);
+      if (error) throw new Error(`Secure provider request failed: ${error.message}`);
+      if (data?.error) throw new Error(String(data.error));
+      return data as T;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Secure provider request failed");
+}
+
+export const sttProvider: STTProvider = env.secureProviderProxyEnabled
+  ? createRemoteSTTProvider(invokeSecureProvider)
   : MockSTTProvider;
 
-export const ocrProvider: OCRProvider = env.googleVisionApiKey
-  ? createGoogleVisionOCRProvider(env.googleVisionApiKey)
-  : env.geminiApiKey
-  ? createGeminiOCRProvider(env.geminiApiKey)
+export const ocrProvider: OCRProvider = env.secureProviderProxyEnabled
+  ? createRemoteOCRProvider(invokeSecureProvider)
   : MockOCRProvider;
 
-export const llmProvider: LLMProvider = env.anthropicApiKey
-  ? createClaudeLLMProvider(env.anthropicApiKey)
-  : env.geminiApiKey
-  ? createGeminiLLMProvider(env.geminiApiKey)
+export const llmProvider: LLMProvider = env.secureProviderProxyEnabled
+  ? createRemoteLLMProvider(invokeSecureProvider)
   : MockLLMProvider;
 
 export const usingMocks = {
@@ -45,3 +53,5 @@ export const usingMocks = {
   ocr: ocrProvider === MockOCRProvider,
   llm: llmProvider === MockLLMProvider,
 };
+
+export const providerMode = env.secureProviderProxyEnabled ? "secure-proxy" : "mock";
