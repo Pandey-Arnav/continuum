@@ -5,32 +5,40 @@
 // the engine functions — nothing else in the app or the engine has to change.
 import { AudioInput, ImageInput, LLMProvider, OCRProvider, OCRResult, STTProvider, STTResult } from "./types";
 
-const DEFAULT_HI_TRANSCRIPT =
-  "Aaj Sunita ki home visit ki. BP 150 over 95 tha. Temperature normal tha. Usne bataya ki severe headache hai aur vision thoda blurry hai. Baby ka movement bhi kam mehsoos ho raha hai. Weight 62 kg record kiya.";
-const DEFAULT_HI_TRANSLATION =
-  "Did Sunita's home visit today. BP was 150 over 95. Temperature was normal. She reported severe headache and slightly blurred vision. Also feeling reduced baby movement. Recorded weight as 62 kg.";
+// IMPORTANT: these providers must never fabricate medical content for a real
+// recording/photo just because no live provider is configured. A caller that
+// passes `simulatedText` is explicitly asking for canned demo/seed content
+// (sample notes, seed data, tests) — that's an honest, labeled substitution.
+// A caller with NO `simulatedText` is handing us real captured audio/image
+// that this mock genuinely cannot process; returning invented antenatal
+// findings for that case would silently misrepresent what the patient said.
+const NO_LIVE_STT_TEXT =
+  "(Demo mode: no live speech-to-text provider is configured, so this recording could not be transcribed. Nothing below reflects what was actually said.)";
+const NO_LIVE_OCR_TEXT =
+  "(Demo mode: no live OCR provider is configured, so this photo could not be read. Nothing below reflects the actual document.)";
 
 export const MockSTTProvider: STTProvider = {
   name: "mock-stt",
   async transcribe(audio: AudioInput): Promise<STTResult> {
+    if (audio.simulatedText !== undefined) {
+      return {
+        text: audio.simulatedText,
+        translatedText: audio.simulatedTranslatedText ?? audio.simulatedText,
+        detectedLanguage: audio.simulatedLanguage ?? audio.languageHint ?? "unknown",
+      };
+    }
     return {
-      text: audio.simulatedText ?? DEFAULT_HI_TRANSCRIPT,
-      translatedText: audio.simulatedTranslatedText ?? DEFAULT_HI_TRANSLATION,
-      detectedLanguage: audio.simulatedLanguage ?? audio.languageHint ?? "hi",
+      text: NO_LIVE_STT_TEXT,
+      translatedText: NO_LIVE_STT_TEXT,
+      detectedLanguage: audio.languageHint ?? "unknown",
     };
   },
 };
 
-const DEFAULT_DISCHARGE_TEXT =
-  "DISCHARGE SUMMARY\nDiagnosis: Community-acquired pneumonia, resolved.\n" +
-  "Medications: Stop Azithromycin. Start Amoxicillin 500mg three times daily for 5 days.\n" +
-  "Follow-up: Review in OPD on 2026-08-17.\n" +
-  "Watch for: chest pain, shortness of breath, or high fever above 103F — return to hospital immediately if these occur.";
-
 export const MockOCRProvider: OCRProvider = {
   name: "mock-ocr",
   async extractText(image: ImageInput): Promise<OCRResult> {
-    return { text: image.simulatedText ?? DEFAULT_DISCHARGE_TEXT };
+    return { text: image.simulatedText ?? NO_LIVE_OCR_TEXT };
   },
 };
 
@@ -216,15 +224,25 @@ const FOLLOWUP_PHRASES_HI: Record<string, { question: string; englishGloss: stri
   severe_headache: { question: "Sar dard ya dhundhla dikhna jaisa kuch hai kya?", englishGloss: "Any headache or blurry vision?" },
 };
 
+// The canned phrase bank above is Hindi/Hinglish only — it cannot honestly
+// localize into whatever language was actually spoken (this mock is regex
+// heuristics, not a translator). Rather than silently mislabel English or
+// Tamil or Swahili audio as "asked in Hindi", this only uses the localized
+// phrases when the visit was actually in Hindi/Marathi (which share enough
+// vocabulary that the canned Hinglish reads naturally for both); every other
+// language gets an honest English question instead of a wrong-language one.
 function heuristicFollowUp(
   missing: { category: string }[],
-  concerning: { category: string; flagLevel: string; flagReason: string }[]
+  concerning: { category: string; flagLevel: string; flagReason: string }[],
+  language: string
 ): { question: string; englishGloss: string }[] {
+  const canLocalize = /^(hi|mr)(-|$)/i.test(language ?? "");
   const out: { question: string; englishGloss: string }[] = [];
 
   for (const c of concerning.slice(0, 2)) {
+    const localized = canLocalize ? FOLLOWUP_PHRASES_HI[c.category]?.question : undefined;
     out.push({
-      question: `${FOLLOWUP_PHRASES_HI[c.category]?.question ?? "Iske baare mein aur bataiye:"} (${c.flagReason})`,
+      question: localized ? `${localized} (${c.flagReason})` : `Can you tell me more about this: ${c.flagReason}`,
       englishGloss: `Get more detail — ${c.flagReason}`,
     });
   }
@@ -232,7 +250,8 @@ function heuristicFollowUp(
   for (const m of missing) {
     if (out.length >= 4) break;
     const phrase = FOLLOWUP_PHRASES_HI[m.category];
-    if (phrase) out.push(phrase);
+    if (!phrase) continue;
+    out.push(canLocalize ? phrase : { question: phrase.englishGloss, englishGloss: phrase.englishGloss });
   }
 
   return out.slice(0, 4);
@@ -259,7 +278,7 @@ export const MockLLMProvider: LLMProvider = {
     }
 
     if (input.task === "followUp") {
-      return JSON.stringify(heuristicFollowUp(input.missing ?? [], input.concerning ?? []));
+      return JSON.stringify(heuristicFollowUp(input.missing ?? [], input.concerning ?? [], input.language ?? ""));
     }
 
     return "[]";

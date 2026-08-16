@@ -16,7 +16,10 @@ export function buildFollowUpPrompt(
 ): string {
   const covered = new Set(structuredEntries.map((e) => e.category));
   const missing = schemaContext.categories.filter((c) => !covered.has(c.category));
-  const concerning = flaggedEntries.filter((e) => e.flagLevel !== "green");
+  const FLAG_RANK: Record<string, number> = { red: 2, amber: 1, green: 0 };
+  const concerning = flaggedEntries
+    .filter((e) => e.flagLevel !== "green")
+    .sort((a, b) => FLAG_RANK[b.flagLevel] - FLAG_RANK[a.flagLevel]);
 
   const inputJson = JSON.stringify({ task: "followUp", missing, concerning, language });
 

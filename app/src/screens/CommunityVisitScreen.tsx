@@ -436,7 +436,11 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
               {result.followUpQuestions.length > 0 && (
                 <SectionCard
                   index={4}
-                  title={`Follow-up questions · ask in ${languageLabel(result.rawCapture.language)}`}
+                  title={
+                    !usingMocks.llm || /^(hi|mr)(-|$)/i.test(result.rawCapture.language ?? "")
+                      ? `Follow-up questions · ask in ${languageLabel(result.rawCapture.language)}`
+                      : "Follow-up questions (English — mock mode can't localize this language)"
+                  }
                   tint={colors.flag.amber.bg}
                 >
                   {result.followUpQuestions.map((q, i) => (

@@ -20,7 +20,17 @@ function assert(condition: unknown, message: string): asserts condition {
 async function scenarioA() {
   console.log("\n=== Scenario A: community health worker voice visit ===");
   const result = await runPipeline({
-    input: { kind: "voice", audio: {}, sttProvider: MockSTTProvider },
+    input: {
+      kind: "voice",
+      audio: {
+        simulatedText:
+          "Aaj Sunita ki home visit ki. BP 150 over 95 tha. Usne bataya ki severe headache hai aur vision thoda blurry hai. Baby ka movement bhi kam mehsoos ho raha hai. Weight 62 kg record kiya.",
+        simulatedTranslatedText:
+          "Did Sunita's home visit today. BP was 150 over 95. She reported severe headache and slightly blurred vision. Also feeling reduced baby movement. Recorded weight as 62 kg.",
+        simulatedLanguage: "hi",
+      },
+      sttProvider: MockSTTProvider,
+    },
     schemaContext: {
       protocolId: antenatalNcdProtocol.id,
       categories: antenatalNcdSchemaCategories,
@@ -49,7 +59,17 @@ async function scenarioA() {
 async function scenarioB() {
   console.log("\n=== Scenario B: hospital discharge photo ===");
   const result = await runPipeline({
-    input: { kind: "photo", image: {}, ocrProvider: MockOCRProvider },
+    input: {
+      kind: "photo",
+      image: {
+        simulatedText:
+          "DISCHARGE SUMMARY\nDiagnosis: Community-acquired pneumonia, resolved.\n" +
+          "Medications: Stop Azithromycin. Start Amoxicillin 500mg three times daily for 5 days.\n" +
+          "Follow-up: Review in OPD on 2026-08-17.\n" +
+          "Watch for: chest pain, shortness of breath, or high fever above 103F — return to hospital immediately if these occur.",
+      },
+      ocrProvider: MockOCRProvider,
+    },
     schemaContext: {
       protocolId: dischargeRedFlagsProtocol.id,
       categories: dischargeSchemaCategories,
