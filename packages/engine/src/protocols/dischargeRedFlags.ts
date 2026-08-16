@@ -64,6 +64,11 @@ export const dischargeRedFlagsProtocol: Protocol = {
   name: "Hospital Discharge Review Protocol",
   description:
     "Hardcoded checklist applied to a photographed hospital discharge summary: surfaces medication changes, documented red-flag symptoms, and near-term follow-ups.",
+  governance: {
+    version: "1.0.0",
+    status: "draft_unapproved",
+    sourceTitle: "Illustrative discharge continuity rule set; clinical localization and approval required",
+  },
   rules,
 };
 

@@ -8,15 +8,22 @@ import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { CommunityVisitScreen } from "./src/screens/CommunityVisitScreen";
 import { DischargeScreen } from "./src/screens/DischargeScreen";
 import { AccessGateScreen } from "./src/screens/AccessGateScreen";
+import { WorkspaceScreen } from "./src/screens/WorkspaceScreen";
+import { PatientSummaryScreen } from "./src/screens/PatientSummaryScreen";
+import { OperationsScreen } from "./src/screens/OperationsScreen";
+import { OfflineSyncBar } from "./src/components/OfflineSyncBar";
 import { colors, radius, shadow, spacing } from "./src/theme";
 import { haptics } from "./src/lib/haptics";
 
-type Tab = "dashboard" | "chw" | "discharge";
+type Tab = "dashboard" | "patients" | "chw" | "discharge" | "summary" | "operations";
 
 const TABS: { key: Tab; label: string; icon: string; note: string }[] = [
   { key: "dashboard", label: "Care Dashboard", icon: "▣", note: "Unified timeline" },
+  { key: "patients", label: "Patients", icon: "♙", note: "Workspaces & consent" },
   { key: "chw", label: "CHW Visit", icon: "♬", note: "Voice capture" },
   { key: "discharge", label: "Discharge", icon: "▤", note: "Document capture" },
+  { key: "summary", label: "Care Summary", icon: "≡", note: "Plain-language view" },
+  { key: "operations", label: "Safety & Ops", icon: "◫", note: "Readiness metrics" },
 ];
 
 export default function App() {
@@ -27,18 +34,25 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [accessStage, setAccessStage] = useState<"loading" | "signed_out" | "needs_access" | "ready">("loading");
 
-  const refreshWorkspace = useCallback(async () => {
+  const refreshWorkspace = useCallback(async (preferredPatientId?: string) => {
     if (!hasSupabaseConfig) return;
     setError(null);
     try {
       if (env.demoMode) {
-        setSession(await ensureDemoSession());
+        const next = await ensureDemoSession();
+        const preferred = next.workspaces.find((workspace) => workspace.patientId === preferredPatientId);
+        setSession(preferred ? { ...next, patientId: preferred.patientId, patientName: preferred.displayName } : next);
         setAccessStage("ready");
         return;
       }
       const access = await inspectWorkspaceSession();
       setAccessStage(access.status);
-      setSession(access.status === "ready" ? access.session : null);
+      if (access.status === "ready") {
+        const preferred = access.session.workspaces.find((workspace) => workspace.patientId === preferredPatientId);
+        setSession(preferred ? { ...access.session, patientId: preferred.patientId, patientName: preferred.displayName } : access.session);
+      } else {
+        setSession(null);
+      }
     } catch (e) {
       setError(String((e as { message?: string })?.message ?? e));
     }
@@ -65,11 +79,11 @@ export default function App() {
   }
 
   if (accessStage === "signed_out") {
-    return <SafeAreaView style={styles.flex}><AccessGateScreen mode="sign-in" onRefresh={refreshWorkspace} /></SafeAreaView>;
+    return <SafeAreaView style={styles.flex}><AccessGateScreen mode="sign-in" onRefresh={() => refreshWorkspace()} /></SafeAreaView>;
   }
 
   if (accessStage === "needs_access") {
-    return <SafeAreaView style={styles.flex}><AccessGateScreen mode="claim-access" onRefresh={refreshWorkspace} /></SafeAreaView>;
+    return <SafeAreaView style={styles.flex}><AccessGateScreen mode="claim-access" onRefresh={() => refreshWorkspace()} /></SafeAreaView>;
   }
 
   if (!session) {
@@ -90,11 +104,30 @@ export default function App() {
     setTab(next);
   };
 
+  const selectPatient = (patientId: string) => {
+    const workspace = session.workspaces.find((candidate) => candidate.patientId === patientId);
+    if (!workspace) return;
+    haptics.tap();
+    setSession({ ...session, patientId: workspace.patientId, patientName: workspace.displayName });
+    setTab("dashboard");
+  };
+
   const content = (
     <View style={styles.content}>
       {tab === "dashboard" && <DashboardScreen patientId={session.patientId} />}
+      {tab === "patients" && (
+        <WorkspaceScreen
+          userId={session.userId}
+          selectedPatientId={session.patientId}
+          workspaces={session.workspaces}
+          onSelectPatient={selectPatient}
+          onWorkspacesChanged={refreshWorkspace}
+        />
+      )}
       {tab === "chw" && <CommunityVisitScreen patientId={session.patientId} userId={session.userId} />}
       {tab === "discharge" && <DischargeScreen patientId={session.patientId} userId={session.userId} />}
+      {tab === "summary" && <PatientSummaryScreen patientId={session.patientId} patientName={session.patientName} userId={session.userId} />}
+      {tab === "operations" && <OperationsScreen patientId={session.patientId} />}
     </View>
   );
 
@@ -105,19 +138,21 @@ export default function App() {
         <View style={styles.desktopShell}>
           <Sidebar activeTab={tab} onSelect={selectTab} />
           <View style={styles.workspace}>
-            <TopBar />
+            <TopBar patientName={session.patientName} />
+            <OfflineSyncBar />
             {content}
           </View>
         </View>
       ) : (
         <>
-          <MobileHeader />
+          <MobileHeader patientName={session.patientName} />
+          <OfflineSyncBar />
           {content}
           <View style={styles.tabBar}>
             {TABS.map((item) => (
               <BottomTab
                 key={item.key}
-                label={item.key === "dashboard" ? "Dashboard" : item.label}
+                label={{ dashboard: "Dashboard", patients: "Patients", chw: "CHW", discharge: "Discharge", summary: "Summary", operations: "Ops" }[item.key]}
                 icon={item.icon}
                 active={tab === item.key}
                 onPress={() => selectTab(item.key)}
@@ -185,9 +220,9 @@ function Sidebar({ activeTab, onSelect }: { activeTab: Tab; onSelect: (tab: Tab)
       </View>
 
       <Text style={[styles.menuLabel, { marginTop: spacing.xl }]}>SYSTEM</Text>
-      <View style={styles.passiveItem}><Text style={styles.passiveIcon}>◎</Text><Text style={styles.passiveText}>Protocols</Text><Text style={styles.soonPill}>2 ACTIVE</Text></View>
-      <View style={styles.passiveItem}><Text style={styles.passiveIcon}>⌁</Text><Text style={styles.passiveText}>Audit trail</Text><Text style={styles.soonPill}>MIGRATION 0004</Text></View>
-      <View style={styles.passiveItem}><Text style={styles.passiveIcon}>⚙</Text><Text style={styles.passiveText}>Settings</Text><Text style={styles.soonPill}>COMING SOON</Text></View>
+      <View style={styles.passiveItem}><Text style={styles.passiveIcon}>◎</Text><Text style={styles.passiveText}>Protocols</Text><Text style={[styles.soonPill, styles.blockedPill]}>2 DRAFT</Text></View>
+      <View style={styles.passiveItem}><Text style={styles.passiveIcon}>⌁</Text><Text style={styles.passiveText}>Audit trail</Text><Text style={styles.soonPill}>0005 READY</Text></View>
+      <View style={styles.passiveItem}><Text style={styles.passiveIcon}>⚙</Text><Text style={styles.passiveText}>Release gate</Text><Text style={[styles.soonPill, styles.blockedPill]}>BLOCKED</Text></View>
 
       <View style={styles.sidebarCallout}>
         <Text style={styles.calloutEmoji}>🩺</Text>
@@ -199,12 +234,12 @@ function Sidebar({ activeTab, onSelect }: { activeTab: Tab; onSelect: (tab: Tab)
   );
 }
 
-function TopBar() {
+function TopBar({ patientName }: { patientName: string }) {
   return (
     <View style={styles.topBar}>
       <View style={styles.menuButton}><Text style={styles.menuButtonText}>☰</Text></View>
       <View style={styles.searchBox}>
-        <Text style={styles.searchText}>Search patient timeline</Text>
+        <Text style={styles.searchText}>{patientName}</Text>
         <Text style={styles.searchIcon}>⌕</Text>
       </View>
       <View style={styles.topSpacer} />
@@ -222,13 +257,13 @@ function TopBar() {
   );
 }
 
-function MobileHeader() {
+function MobileHeader({ patientName }: { patientName: string }) {
   return (
     <View style={styles.mobileHeader}>
       <BrandMark compact />
       <View style={{ flex: 1 }}>
         <Text style={styles.mobileBrandName}>Continuum Admin</Text>
-        <Text style={styles.mobileBrandNote}>Care continuity workspace</Text>
+        <Text style={styles.mobileBrandNote}>{patientName}</Text>
       </View>
       <View style={styles.topAction}><Text>♢</Text><View style={styles.notificationDot} /></View>
     </View>
@@ -290,6 +325,7 @@ const styles = StyleSheet.create({
   passiveIcon: { width: 18, color: colors.inkFaint, fontSize: 12, textAlign: "center" },
   passiveText: { flex: 1, color: colors.inkMuted, fontSize: 11 },
   soonPill: { fontSize: 7, color: colors.accent, backgroundColor: colors.accentSoft, borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2, fontWeight: "800" },
+  blockedPill: { color: colors.danger, backgroundColor: colors.dangerSoft },
   sidebarCallout: { marginTop: "auto", borderRadius: radius.lg, backgroundColor: colors.primarySoft, padding: 14, alignItems: "center" },
   calloutEmoji: { fontSize: 34, marginBottom: 5 },
   calloutTitle: { color: colors.primaryDark, fontSize: 11.5, fontWeight: "800" },

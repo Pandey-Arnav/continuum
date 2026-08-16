@@ -52,9 +52,10 @@ npm install   # postinstall automatically builds packages/engine to dist/
 ### 2. Create the Supabase project and schema
 
 1. Create a project at supabase.com (free tier).
-2. In the SQL editor, run the four files in `backend/supabase/migrations/`
+2. In the SQL editor, run the five files in `backend/supabase/migrations/`
    **in order**: `0001_init.sql`, `0002_storage.sql`,
-   `0003_fix_patients_readback.sql`, `0004_secure_workflows.sql`
+   `0003_fix_patients_readback.sql`, `0004_secure_workflows.sql`, and
+   `0005_year_one_foundation.sql`
    (0003 fixes a real bug: `INSERT ... RETURNING` on `patients` needs the new
    row to also pass the SELECT policy, which originally required a
    `patient_relationships` row that can't exist yet for a patient still being
@@ -138,11 +139,26 @@ without a visible trigger).
 project seed, an entry saved on one should appear on the other's Timeline
 without a manual refresh.
 
+## Year-one foundation
+
+The app now includes multi-patient workspaces, assignment tracking, consent
+and retention records, data-rights requests, an append-only correction
+ledger, encrypted native offline outbox, red-item acknowledgements,
+operational metrics, protocol-version governance, and a pilot FHIR export.
+All bundled protocol versions deliberately start as `draft_unapproved`.
+
+These features are infrastructure, not clinical validation. See
+[`docs/year-one-roadmap.md`](docs/year-one-roadmap.md) and
+[`docs/release-gates.md`](docs/release-gates.md) for the work that still
+requires named clinicians, a partner organization, consented data, security
+review, and field evidence.
+
 ## Production-readiness notes
 
 - Provider credentials are held by an authenticated Edge Function.
 - Migration `0004_secure_workflows.sql` adds profiles, one-time patient
-  invites, human review metadata, client-event idempotency, and audit events.
+  invites, human review metadata, client-event idempotency, and audit events;
+  migration `0005_year_one_foundation.sql` adds governed year-one workflows.
 - `EXPO_PUBLIC_DEMO_MODE=false` enables separate accounts and invite claims;
   demo mode intentionally keeps the single-device seeded walkthrough.
 - For the first production workspace, create the clinician/CHW account, set
@@ -150,6 +166,7 @@ without a manual refresh.
   role-checked **Create approved workspace** action. Direct self-attachment
   to arbitrary patients is denied by migration 0004.
 - Extracted source snippets are checked against raw evidence, and users must
-  verify every fact before saving.
+  verify every fact before saving. Corrections require a reason and append a
+  separate audit record instead of rewriting the original extraction.
 - See `docs/production-readiness.md` and `docs/safety-and-privacy.md` before
   handling real patient data or making compliance claims.

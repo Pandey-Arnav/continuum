@@ -13,13 +13,15 @@ Expo client -> Supabase Auth/JWT -> continuum-provider -> Gemini/Anthropic/STT/O
 
 The provider function retries remain client-side and idempotent. Entry writes
 carry `client_event_id`, which is unique after migration 0004, so a save retry
-cannot create a duplicate event.
+cannot create a duplicate event. Migration 0005 adds an encrypted device
+outbox on native platforms; the web build keeps queued health data only in
+memory and never persists it to browser storage.
 
 ## Deploy the database and provider
 
 1. Install and authenticate the Supabase CLI.
 2. From `backend/supabase`, link the project and apply migrations through
-   `0004_secure_workflows.sql`.
+   `0005_year_one_foundation.sql`.
 3. Deploy `continuum-provider` with JWT verification enabled.
 4. Set at least `GEMINI_API_KEY` as a function secret. Optionally set
    `ANTHROPIC_API_KEY`, `SARVAM_API_KEY`, `ELEVENLABS_API_KEY`, or
@@ -66,8 +68,10 @@ Assign CHW/clinician/admin roles only through a trusted administrative path.
 - Unmatched snippets are labeled `review`, never assigned artificial model
   confidence.
 - Every fact must be manually checked before it can be saved.
-- Saved rows record review status, reviewer, review time, provider mode, raw
-  evidence, deterministic rule ID, and an audit event.
+- A changed fact requires a reason and is appended to `entry_corrections`;
+  the original entry remains immutable.
+- Saved rows record review status, reviewer, review time, provider mode,
+  protocol version, raw evidence, deterministic rule ID, and an audit event.
 
 ## Tests and operations
 
@@ -77,6 +81,18 @@ Assign CHW/clinician/admin roles only through a trusted administrative path.
 - Provider calls have a 45-second timeout and one retry.
 - The dashboard exposes deterministic longitudinal signals, source/severity
   filters, and evidence/rule search.
+- The operations view exposes measured workflow success/duration, correction
+  count, evidence-match rate, offline backlog, protocol state, and red-item
+  acknowledgement. Empty metrics stay empty; the app does not invent pilot
+  evidence.
+
+## Non-software release gates
+
+The repository cannot complete clinical approval, informed consent,
+organizational contracting, target-EHR validation, or field evaluation by
+itself. `docs/release-gates.md` keeps those items blocked until signed evidence
+is attached. Never change a protocol to `clinically_approved` merely to make a
+demo look complete.
 
 ## Dependency risk
 

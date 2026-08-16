@@ -9,6 +9,9 @@
     "postinstall": "npm run engine:build",
     "engine:build": "npm run build -w packages/engine",
     "engine:test": "npm run test -w packages/engine",
+    "engine:typecheck": "npm run typecheck -w packages/engine",
+    "app:typecheck": "npm exec --workspace app tsc -- --noEmit",
+    "app:export:web": "npm run export:web -w app",
     "app:start": "npm run start -w app"
   }
 }

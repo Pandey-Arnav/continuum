@@ -6,6 +6,8 @@ export * from "./handoff";
 export * from "./followUp";
 export * from "./pipeline";
 export * from "./longitudinal";
+export * from "./evaluation";
+export * from "./fhir";
 export * from "./providers/types";
 export * from "./providers/remote";
 export { MockSTTProvider, MockOCRProvider, MockLLMProvider } from "./providers/mock";

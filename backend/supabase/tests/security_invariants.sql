@@ -56,6 +56,69 @@ begin
   if not exists (
     select 1 from pg_tables where schemaname = 'public' and tablename = 'audit_events' and rowsecurity
   ) then raise exception 'audit_events must exist with RLS enabled'; end if;
+
+  if exists (
+    select 1
+    from (values
+      ('entry_corrections'),
+      ('patient_assignments'),
+      ('consent_records'),
+      ('data_subject_requests'),
+      ('care_notifications'),
+      ('workflow_events'),
+      ('fhir_export_events'),
+      ('protocol_versions')
+    ) as required(tablename)
+    where not exists (
+      select 1 from pg_tables
+      where schemaname = 'public'
+        and pg_tables.tablename = required.tablename
+        and rowsecurity
+    )
+  ) then raise exception 'all year-one tables must exist with RLS enabled'; end if;
+
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename in ('entry_corrections', 'consent_records', 'care_notifications', 'patient_assignments')
+      and cmd in ('UPDATE', 'DELETE', 'ALL')
+  ) then raise exception 'corrections, consent, and notification content must not be directly mutable'; end if;
+
+  if exists (
+    select 1 from protocol_versions
+    where status = 'clinically_approved'
+      and (approved_by is null or approved_at is null or source_uri is null)
+  ) then raise exception 'approved protocols require accountable approval metadata'; end if;
+
+  if not exists (
+    select 1 from protocol_versions
+    where id = 'antenatal_ncd_v1' and status = 'draft_unapproved'
+  ) then raise exception 'the bundled antenatal protocol must default to draft_unapproved'; end if;
+
+  if not exists (
+    select 1 from protocol_versions
+    where id = 'discharge_red_flags_v1' and status = 'draft_unapproved'
+  ) then raise exception 'the bundled discharge protocol must default to draft_unapproved'; end if;
+
+  if not exists (
+    select 1 from information_schema.routines
+    where routine_schema = 'public' and routine_name = 'record_patient_consent'
+  ) then raise exception 'consent recording function is missing'; end if;
+
+  if not exists (
+    select 1 from information_schema.routines
+    where routine_schema = 'public' and routine_name = 'set_patient_retention'
+  ) then raise exception 'retention governance function is missing'; end if;
+
+  if not exists (
+    select 1 from information_schema.routines
+    where routine_schema = 'public' and routine_name = 'acknowledge_care_notification'
+  ) then raise exception 'notification acknowledgement function is missing'; end if;
+
+  if not exists (
+    select 1 from information_schema.routines
+    where routine_schema = 'public' and routine_name = 'set_patient_assignment_status'
+  ) then raise exception 'narrow assignment status function is missing'; end if;
 end;
 $$;
 

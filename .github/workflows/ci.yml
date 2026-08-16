@@ -19,5 +19,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run engine:test
+      - run: npm run engine:typecheck
       - run: npm run engine:build
-      - run: npm exec --workspace app tsc -- --noEmit
+      - run: npm run app:typecheck
+      - run: npm run app:export:web

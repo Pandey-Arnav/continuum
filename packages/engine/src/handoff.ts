@@ -45,3 +45,24 @@ export async function handoff(
     highestFlagLevel: highestFlagLevel(entries),
   };
 }
+
+/**
+ * Offline-safe phrasing used after a human corrects an extracted value.
+ * It only restates deterministic rule results and never introduces advice.
+ */
+export function buildDeterministicHandoff(entries: FlaggedEntry[], recipientRole: RecipientRole): HandoffResult {
+  const highest = highestFlagLevel(entries);
+  const red = entries.filter((entry) => entry.flagLevel === "red");
+  const amber = entries.filter((entry) => entry.flagLevel === "amber");
+  const headline = red[0] ?? amber[0] ?? entries[0];
+  const findingSummary = red.length
+    ? `${red.length} verified finding${red.length === 1 ? "" : "s"} need${red.length === 1 ? "s" : ""} prompt attention`
+    : amber.length
+      ? `${amber.length} verified finding${amber.length === 1 ? " is" : "s are"} worth review`
+      : "The verified findings are recorded as informational";
+  const reason = headline ? ` Most notable: ${headline.flagReason}.` : "";
+  const ending = recipientRole === "patient" || recipientRole === "family_member"
+    ? " This is a record summary, not a diagnosis; use the care team's approved contact or emergency pathway if concerned."
+    : " Review the linked source evidence and rule IDs before deciding the next step.";
+  return { recipientRole, highestFlagLevel: highest, summary: `${findingSummary}.${reason}${ending}` };
+}

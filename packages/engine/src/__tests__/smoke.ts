@@ -6,6 +6,7 @@ import { runPipeline } from "../pipeline";
 import { MockLLMProvider, MockOCRProvider, MockSTTProvider } from "../providers/mock";
 import { antenatalNcdProtocol, antenatalNcdSchemaCategories } from "../protocols/antenatalNcd";
 import { dischargeRedFlagsProtocol, dischargeSchemaCategories } from "../protocols/dischargeRedFlags";
+import { buildDeterministicHandoff } from "../handoff";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -75,6 +76,10 @@ async function scenarioB() {
   );
   assert(result.handoffResult.recipientRole === "patient", "scenario B handoff addressed to patient");
   assert(result.followUpQuestions.length === 0, "scenario B (photo capture) produces no follow-up questions");
+
+  const offlineHandoff = buildDeterministicHandoff(result.flaggedEntries, "patient");
+  assert(offlineHandoff.highestFlagLevel === "red", "offline-safe corrected handoff preserves deterministic severity");
+  assert(offlineHandoff.summary.includes("not a diagnosis"), "offline-safe patient handoff preserves the limitation");
 }
 
 async function main() {

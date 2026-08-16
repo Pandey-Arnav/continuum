@@ -15,6 +15,12 @@ type ProxyRequest = {
   languageHint?: string;
 };
 
+const MAX_REQUEST_BYTES = 28_000_000;
+const MAX_BASE64_CHARS = 26_000_000;
+const MAX_PROMPT_CHARS = 60_000;
+const ALLOWED_AUDIO_TYPES = new Set(["audio/m4a", "audio/mp4", "audio/mpeg", "audio/wav", "audio/webm", "audio/x-m4a"]);
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -114,6 +120,7 @@ function extractJsonObject(text: string): Record<string, string> {
 async function transcribe(body: ProxyRequest) {
   if (!body.base64) throw new Error("Audio data is required");
   const mimeType = body.mimeType ?? "audio/m4a";
+  if (!ALLOWED_AUDIO_TYPES.has(mimeType)) throw new Error("Unsupported audio type");
   const sarvamKey = Deno.env.get("SARVAM_API_KEY");
   if (sarvamKey) {
     const form = new FormData();
@@ -162,6 +169,8 @@ async function transcribe(body: ProxyRequest) {
 
 async function extractText(body: ProxyRequest) {
   if (!body.base64) throw new Error("Image data is required");
+  const mimeType = body.mimeType ?? "image/jpeg";
+  if (!ALLOWED_IMAGE_TYPES.has(mimeType)) throw new Error("Unsupported image type");
   const visionKey = Deno.env.get("GOOGLE_VISION_API_KEY");
   if (visionKey) {
     const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${visionKey}`, {
@@ -177,7 +186,7 @@ async function extractText(body: ProxyRequest) {
   }
 
   const text = await callGemini([
-    { inline_data: { mime_type: body.mimeType ?? "image/jpeg", data: body.base64 } },
+    { inline_data: { mime_type: mimeType, data: body.base64 } },
     { text: "Extract all text exactly as written and preserve line breaks. Respond with only the text." },
   ]);
   return { text, provider: "gemini" };
@@ -188,8 +197,14 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   try {
+    const contentLength = Number(req.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+      return jsonResponse({ error: "Request is too large" }, 413);
+    }
     await requireUser(req);
     const body = (await req.json()) as ProxyRequest;
+    if (body.prompt && body.prompt.length > MAX_PROMPT_CHARS) return jsonResponse({ error: "Prompt is too large" }, 413);
+    if (body.base64 && body.base64.length > MAX_BASE64_CHARS) return jsonResponse({ error: "Media is too large" }, 413);
     if (body.operation === "llm") {
       if (!body.prompt) throw new Error("Prompt is required");
       return jsonResponse(await complete(body.prompt, Boolean(body.json)));
@@ -199,7 +214,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Unsupported operation" }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Provider request failed";
-    const status = message === "Authentication required" ? 401 : 500;
+    const status = message === "Authentication required" ? 401 : /required|unsupported/i.test(message) ? 400 : 500;
     console.error("continuum-provider", message);
     return jsonResponse({ error: message }, status);
   }
