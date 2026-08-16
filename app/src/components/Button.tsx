@@ -11,6 +11,7 @@ export function Button({
   variant = "primary",
   icon,
   fullWidth = true,
+  caption,
 }: {
   label: string;
   onPress: () => void;
@@ -19,34 +20,38 @@ export function Button({
   variant?: Variant;
   icon?: string;
   fullWidth?: boolean;
+  caption?: string;
 }) {
   const isDisabled = disabled || loading;
   const palette = VARIANTS[variant];
 
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={isDisabled}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled: isDisabled, busy: loading }}
-      style={({ pressed }) => [
-        styles.base,
-        { backgroundColor: palette.bg, borderColor: palette.border, borderWidth: palette.border ? 1 : 0 },
-        !fullWidth && styles.inline,
-        isDisabled && styles.disabled,
-        pressed && !isDisabled && styles.pressed,
-      ]}
-    >
-      {loading ? (
-        <ActivityIndicator color={palette.fg} />
-      ) : (
-        <View style={styles.content}>
-          {icon && <Text style={[styles.icon, { color: palette.fg }]}>{icon}</Text>}
-          <Text style={[styles.label, { color: palette.fg }]}>{label}</Text>
-        </View>
-      )}
-    </Pressable>
+    <View style={!fullWidth && styles.inlineWrap}>
+      <Pressable
+        onPress={onPress}
+        disabled={isDisabled}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled: isDisabled, busy: loading }}
+        style={({ pressed }) => [
+          styles.base,
+          { backgroundColor: palette.bg, borderColor: palette.border, borderWidth: palette.border ? 1 : 0 },
+          !fullWidth && styles.inline,
+          isDisabled && styles.disabled,
+          pressed && !isDisabled && styles.pressed,
+        ]}
+      >
+        {loading ? (
+          <ActivityIndicator color={palette.fg} />
+        ) : (
+          <View style={styles.content}>
+            {icon && <Text style={[styles.icon, { color: palette.fg }]}>{icon}</Text>}
+            <Text style={[styles.label, { color: palette.fg }]}>{label}</Text>
+          </View>
+        )}
+      </Pressable>
+      {caption && <Text style={styles.caption}>{caption}</Text>}
+    </View>
   );
 }
 
@@ -68,9 +73,18 @@ const styles = StyleSheet.create({
     minHeight: 50,
   },
   inline: { alignSelf: "flex-start", paddingHorizontal: spacing.lg },
+  inlineWrap: { alignItems: "flex-start" },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   icon: { fontSize: 15 },
   label: { fontSize: 14.5, fontWeight: "700" },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  caption: {
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: colors.inkFaint,
+    textAlign: "center",
+    alignSelf: "center",
+    marginTop: 8,
+  },
 });

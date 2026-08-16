@@ -15,7 +15,7 @@ import { FlagBadge } from "../components/FlagBadge";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { haptics } from "../lib/haptics";
-import { colors, radius, shadow, spacing, typography } from "../theme";
+import { colors, radius, shadow, spacing, typography, CATEGORY_ICON } from "../theme";
 
 const NEW_ENTRY_HIGHLIGHT_MS = 6000;
 
@@ -31,22 +31,6 @@ const SOURCE_ICON: Record<string, string> = {
 const SOURCE_LABEL: Record<string, string> = {
   chw_voice_visit: "Community health worker visit",
   discharge_photo: "Hospital discharge sheet",
-};
-
-const CATEGORY_ICON: Record<string, string> = {
-  blood_pressure_systolic: "🩺",
-  blood_pressure_diastolic: "🩺",
-  temperature_f: "🌡️",
-  blood_sugar_random_mgdl: "🩸",
-  weight_kg: "⚖️",
-  vaginal_bleeding: "🩸",
-  reduced_fetal_movement: "👶",
-  severe_swelling: "💧",
-  severe_headache: "🤕",
-  medication_change: "💊",
-  red_flag_symptom: "⚠️",
-  follow_up_appointment: "📅",
-  diagnosis_note: "📋",
 };
 
 type SourceFilter = "all" | "chw_voice_visit" | "discharge_photo";

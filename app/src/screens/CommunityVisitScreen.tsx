@@ -18,11 +18,12 @@ import { insertEntryFromPipeline } from "../lib/entries";
 import { haptics } from "../lib/haptics";
 import { FlagBadge } from "../components/FlagBadge";
 import { Button } from "../components/Button";
-import { Card } from "../components/Card";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { PipelineSteps } from "../components/PipelineSteps";
-import { colors, spacing, typography, PIPELINE_STAGES } from "../theme";
+import { SectionCard } from "../components/SectionCard";
+import { FadeSlideIn } from "../components/FadeSlideIn";
+import { colors, spacing, CATEGORY_ICON, PIPELINE_STAGES } from "../theme";
 
 const SAMPLE_NOTES = [
   {
@@ -177,100 +178,99 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
 
       {usingMocks.stt && (
         <View style={styles.mockNote}>
+          <Text style={styles.mockNoteIcon}>ℹ️</Text>
           <Text style={styles.mockNoteText}>Using mock speech-to-text — no SARVAM_API_KEY set. Content comes from the sample note text.</Text>
         </View>
       )}
 
-      <Text style={styles.sectionLabel}>1 · Capture</Text>
-      <Card style={styles.section}>
-        <SegmentedControl
-          value={captureMode}
-          onChange={(v) => setCaptureMode(v)}
-          options={[
-            { value: "sample", label: "Use sample note" },
-            { value: "record", label: "Record real audio" },
-          ]}
+      <View style={styles.flow}>
+        <SectionCard index={1} title="Capture">
+          <SegmentedControl
+            value={captureMode}
+            onChange={(v) => setCaptureMode(v)}
+            options={[
+              { value: "sample", label: "Use sample note" },
+              { value: "record", label: "Record real audio" },
+            ]}
+          />
+
+          {useSample ? (
+            <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+              {SAMPLE_NOTES.map((s, i) => (
+                <Pressable
+                  key={i}
+                  style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]}
+                  onPress={() => {
+                    haptics.tap();
+                    setSelectedSample(i);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: selectedSample === i }}
+                  accessibilityLabel={s.label}
+                >
+                  <View style={[styles.radio, selectedSample === i && styles.radioActive]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.sampleLabel}>{s.label}</Text>
+                    <Text style={styles.sampleText}>{s.text}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
+              {!recording ? (
+                <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
+              ) : (
+                <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
+              )}
+              {recording && <Text style={styles.recordingNote}>● Recording…</Text>}
+              {recordedUri && !recording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
+            </View>
+          )}
+        </SectionCard>
+
+        <Button
+          label={running ? "Running pipeline…" : "▶ Run the pipeline"}
+          onPress={runVisit}
+          loading={running}
+          disabled={!canRun}
+          caption="capture → structure → compare → flag → handoff"
         />
 
-        {useSample ? (
-          <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-            {SAMPLE_NOTES.map((s, i) => (
-              <Pressable
-                key={i}
-                style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]}
-                onPress={() => {
-                  haptics.tap();
-                  setSelectedSample(i);
-                }}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: selectedSample === i }}
-                accessibilityLabel={s.label}
-              >
-                <View style={[styles.radio, selectedSample === i && styles.radioActive]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.sampleLabel}>{s.label}</Text>
-                  <Text style={styles.sampleText}>{s.text}</Text>
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        ) : (
-          <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
-            {!recording ? (
-              <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
-            ) : (
-              <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
-            )}
-            {recording && <Text style={styles.recordingNote}>● Recording…</Text>}
-            {recordedUri && !recording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
-          </View>
+        {(running || result) && <PipelineSteps status={stepStatus} />}
+
+        {result && (
+          <FadeSlideIn trigger={result}>
+            <View style={styles.flow}>
+              <SectionCard index={2} title="Structured & flagged">
+                {result.flaggedEntries.map((f, i) => (
+                  <View key={i} style={[styles.factRow, i > 0 && styles.factRowBorder]}>
+                    <FlagBadge level={f.flagLevel} compact />
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.factCategory}>
+                        {CATEGORY_ICON[f.category] ?? "📌"} {f.category.replace(/_/g, " ")}: {String(f.value)} {f.unit ?? ""}
+                      </Text>
+                      <Text style={styles.factReason}>{f.flagReason}</Text>
+                    </View>
+                  </View>
+                ))}
+              </SectionCard>
+
+              <SectionCard index={3} title="Handoff · to supervising health worker" tint={colors.accentSoft}>
+                <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
+              </SectionCard>
+
+              <Button
+                label={saved ? "✓ Saved to timeline" : "Save to timeline"}
+                onPress={save}
+                loading={saving}
+                disabled={saved}
+                variant={saved ? "secondary" : "primary"}
+              />
+            </View>
+          </FadeSlideIn>
         )}
-      </Card>
-
-      <Button
-        label={running ? "Running pipeline…" : "Run capture → structure → compare → flag → handoff"}
-        onPress={runVisit}
-        loading={running}
-        disabled={!canRun}
-      />
-
-      {(running || result) && (
-        <View style={styles.stepsWrap}>
-          <PipelineSteps status={stepStatus} />
-        </View>
-      )}
-
-      {result && (
-        <>
-          <Text style={styles.sectionLabel}>2 · Structured + Flagged</Text>
-          <Card style={styles.section}>
-            {result.flaggedEntries.map((f, i) => (
-              <View key={i} style={[styles.factRow, i > 0 && styles.factRowBorder]}>
-                <FlagBadge level={f.flagLevel} compact />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.factCategory}>
-                    {f.category.replace(/_/g, " ")}: {String(f.value)} {f.unit ?? ""}
-                  </Text>
-                  <Text style={styles.factReason}>{f.flagReason}</Text>
-                </View>
-              </View>
-            ))}
-          </Card>
-
-          <Text style={styles.sectionLabel}>3 · Handoff (to supervising health worker)</Text>
-          <Card style={styles.section} accentColor={colors.accent}>
-            <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
-          </Card>
-
-          <Button
-            label={saved ? "✓ Saved to timeline" : "Save to timeline"}
-            onPress={save}
-            loading={saving}
-            disabled={saved}
-            variant={saved ? "secondary" : "primary"}
-          />
-        </>
-      )}
+      </View>
     </ScrollView>
   );
 }
@@ -290,10 +290,18 @@ async function tryUploadAudio(patientId: string, uri: string): Promise<string | 
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
-  mockNote: { backgroundColor: "#FDF3E0", borderRadius: 10, padding: spacing.sm, marginBottom: spacing.lg },
-  mockNoteText: { fontSize: 12, color: "#9A5B06", fontWeight: "600" },
-  sectionLabel: { ...typography.label, marginBottom: spacing.sm, marginTop: spacing.xl },
-  section: { marginBottom: 0 },
+  flow: { gap: spacing.xl },
+  mockNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: colors.flag.amber.bg,
+    borderRadius: 10,
+    padding: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  mockNoteIcon: { fontSize: 13 },
+  mockNoteText: { flex: 1, fontSize: 12, color: colors.flag.amber.fg, fontWeight: "600", lineHeight: 16 },
   sampleCard: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -318,7 +326,6 @@ const styles = StyleSheet.create({
   sampleText: { fontSize: 12, color: colors.inkMuted, marginTop: 3, lineHeight: 16 },
   recordingNote: { marginTop: spacing.sm, color: colors.danger, fontSize: 12, fontWeight: "700" },
   recordedNote: { marginTop: spacing.sm, color: colors.flag.green.fg, fontSize: 12, fontWeight: "700" },
-  stepsWrap: { marginTop: spacing.lg, paddingHorizontal: spacing.xs },
   factRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: spacing.sm },
   factRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   factCategory: { fontSize: 13, fontWeight: "700", color: colors.ink },

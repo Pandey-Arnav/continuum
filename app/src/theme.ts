@@ -79,6 +79,22 @@ export const shadow = {
   }),
 };
 
+export const CATEGORY_ICON: Record<string, string> = {
+  blood_pressure_systolic: "🩺",
+  blood_pressure_diastolic: "🩺",
+  temperature_f: "🌡️",
+  blood_sugar_random_mgdl: "🩸",
+  weight_kg: "⚖️",
+  vaginal_bleeding: "🩸",
+  reduced_fetal_movement: "👶",
+  severe_swelling: "💧",
+  severe_headache: "🤕",
+  medication_change: "💊",
+  red_flag_symptom: "⚠️",
+  follow_up_appointment: "📅",
+  diagnosis_note: "📋",
+};
+
 export const PIPELINE_STAGES = [
   { key: "capture", label: "Capture", icon: "①" },
   { key: "structure", label: "Structure", icon: "②" },

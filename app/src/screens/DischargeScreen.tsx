@@ -18,10 +18,11 @@ import { insertEntryFromPipeline } from "../lib/entries";
 import { haptics } from "../lib/haptics";
 import { FlagBadge } from "../components/FlagBadge";
 import { Button } from "../components/Button";
-import { Card } from "../components/Card";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { PipelineSteps } from "../components/PipelineSteps";
-import { colors, radius, spacing, typography, PIPELINE_STAGES } from "../theme";
+import { SectionCard } from "../components/SectionCard";
+import { FadeSlideIn } from "../components/FadeSlideIn";
+import { colors, radius, spacing, CATEGORY_ICON, PIPELINE_STAGES } from "../theme";
 
 const SAMPLE_SHEETS = [
   {
@@ -158,105 +159,104 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
 
       {usingMocks.ocr && (
         <View style={styles.mockNote}>
+          <Text style={styles.mockNoteIcon}>ℹ️</Text>
           <Text style={styles.mockNoteText}>Using mock OCR — no GOOGLE_VISION_API_KEY set. Content comes from the sample sheet text.</Text>
         </View>
       )}
 
-      <Text style={styles.sectionLabel}>1 · Capture</Text>
-      <Card style={styles.section}>
-        <View style={styles.row}>
-          <Pressable
-            style={[styles.pill, useSample && styles.pillActive]}
-            onPress={() => {
-              if (!useSample) haptics.tap();
-              setUseSample(true);
-            }}
-            accessibilityRole="button"
-            accessibilityState={{ selected: useSample }}
-          >
-            <Text style={[styles.pillText, useSample && styles.pillTextActive]}>Use sample sheet</Text>
-          </Pressable>
-          <Pressable style={styles.pill} onPress={() => pickImage(true)} accessibilityRole="button" accessibilityLabel="Take photo">
-            <Text style={styles.pillText}>📷 Take photo</Text>
-          </Pressable>
-          <Pressable style={styles.pill} onPress={() => pickImage(false)} accessibilityRole="button" accessibilityLabel="Choose from library">
-            <Text style={styles.pillText}>🖼️ Choose from library</Text>
-          </Pressable>
-        </View>
-
-        {useSample ? (
-          <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-            {SAMPLE_SHEETS.map((s, i) => (
-              <Pressable
-                key={i}
-                style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]}
-                onPress={() => {
-                  haptics.tap();
-                  setSelectedSample(i);
-                }}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: selectedSample === i }}
-                accessibilityLabel={s.label}
-              >
-                <View style={[styles.radio, selectedSample === i && styles.radioActive]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.sampleLabel}>{s.label}</Text>
-                  <Text style={styles.sampleText} numberOfLines={4}>
-                    {s.text}
-                  </Text>
-                </View>
-              </Pressable>
-            ))}
+      <View style={styles.flow}>
+        <SectionCard index={1} title="Capture">
+          <View style={styles.row}>
+            <Pressable
+              style={[styles.pill, useSample && styles.pillActive]}
+              onPress={() => {
+                if (!useSample) haptics.tap();
+                setUseSample(true);
+              }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: useSample }}
+            >
+              <Text style={[styles.pillText, useSample && styles.pillTextActive]}>Use sample sheet</Text>
+            </Pressable>
+            <Pressable style={styles.pill} onPress={() => pickImage(true)} accessibilityRole="button" accessibilityLabel="Take photo">
+              <Text style={styles.pillText}>📷 Take photo</Text>
+            </Pressable>
+            <Pressable style={styles.pill} onPress={() => pickImage(false)} accessibilityRole="button" accessibilityLabel="Choose from library">
+              <Text style={styles.pillText}>🖼️ Choose from library</Text>
+            </Pressable>
           </View>
-        ) : (
-          imageUri && <Image source={{ uri: imageUri }} style={styles.previewImage} resizeMode="contain" />
+
+          {useSample ? (
+            <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+              {SAMPLE_SHEETS.map((s, i) => (
+                <Pressable
+                  key={i}
+                  style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]}
+                  onPress={() => {
+                    haptics.tap();
+                    setSelectedSample(i);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: selectedSample === i }}
+                  accessibilityLabel={s.label}
+                >
+                  <View style={[styles.radio, selectedSample === i && styles.radioActive]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.sampleLabel}>{s.label}</Text>
+                    <Text style={styles.sampleText} numberOfLines={4}>
+                      {s.text}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            imageUri && <Image source={{ uri: imageUri }} style={styles.previewImage} resizeMode="contain" />
+          )}
+        </SectionCard>
+
+        <Button
+          label={running ? "Running pipeline…" : "▶ Run the pipeline"}
+          onPress={runDischarge}
+          loading={running}
+          disabled={!useSample && !imageUri}
+          caption="capture → structure → compare → flag → handoff"
+        />
+
+        {(running || result) && <PipelineSteps status={stepStatus} />}
+
+        {result && (
+          <FadeSlideIn trigger={result}>
+            <View style={styles.flow}>
+              <SectionCard index={2} title="Structured & flagged">
+                {result.flaggedEntries.map((f, i) => (
+                  <View key={i} style={[styles.factRow, i > 0 && styles.factRowBorder]}>
+                    <FlagBadge level={f.flagLevel} compact />
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.factCategory}>
+                        {CATEGORY_ICON[f.category] ?? "📌"} {f.category.replace(/_/g, " ")}: {String(f.value)}
+                      </Text>
+                      <Text style={styles.factReason}>{f.flagReason}</Text>
+                    </View>
+                  </View>
+                ))}
+              </SectionCard>
+
+              <SectionCard index={3} title="Handoff · to patient, plain language" tint={colors.primarySoft}>
+                <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
+              </SectionCard>
+
+              <Button
+                label={saved ? "✓ Saved to timeline" : "Save to timeline"}
+                onPress={save}
+                loading={saving}
+                disabled={saved}
+                variant={saved ? "secondary" : "primary"}
+              />
+            </View>
+          </FadeSlideIn>
         )}
-      </Card>
-
-      <Button
-        label={running ? "Running pipeline…" : "Run capture → structure → compare → flag → handoff"}
-        onPress={runDischarge}
-        loading={running}
-        disabled={!useSample && !imageUri}
-      />
-
-      {(running || result) && (
-        <View style={styles.stepsWrap}>
-          <PipelineSteps status={stepStatus} />
-        </View>
-      )}
-
-      {result && (
-        <>
-          <Text style={styles.sectionLabel}>2 · Structured + Flagged</Text>
-          <Card style={styles.section}>
-            {result.flaggedEntries.map((f, i) => (
-              <View key={i} style={[styles.factRow, i > 0 && styles.factRowBorder]}>
-                <FlagBadge level={f.flagLevel} compact />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.factCategory}>
-                    {f.category.replace(/_/g, " ")}: {String(f.value)}
-                  </Text>
-                  <Text style={styles.factReason}>{f.flagReason}</Text>
-                </View>
-              </View>
-            ))}
-          </Card>
-
-          <Text style={styles.sectionLabel}>3 · Handoff (to patient, plain language)</Text>
-          <Card style={styles.section} accentColor={colors.primary}>
-            <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
-          </Card>
-
-          <Button
-            label={saved ? "✓ Saved to timeline" : "Save to timeline"}
-            onPress={save}
-            loading={saving}
-            disabled={saved}
-            variant={saved ? "secondary" : "primary"}
-          />
-        </>
-      )}
+      </View>
     </ScrollView>
   );
 }
@@ -276,10 +276,18 @@ async function tryUploadPhoto(patientId: string, uri: string): Promise<string | 
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
-  mockNote: { backgroundColor: "#FDF3E0", borderRadius: 10, padding: spacing.sm, marginBottom: spacing.lg },
-  mockNoteText: { fontSize: 12, color: "#9A5B06", fontWeight: "600" },
-  sectionLabel: { ...typography.label, marginBottom: spacing.sm, marginTop: spacing.xl },
-  section: { marginBottom: 0 },
+  flow: { gap: spacing.xl },
+  mockNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: colors.flag.amber.bg,
+    borderRadius: 10,
+    padding: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  mockNoteIcon: { fontSize: 13 },
+  mockNoteText: { flex: 1, fontSize: 12, color: colors.flag.amber.fg, fontWeight: "600", lineHeight: 16 },
   row: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
   pill: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
   pillActive: { backgroundColor: colors.ink },
@@ -308,7 +316,6 @@ const styles = StyleSheet.create({
   sampleLabel: { fontSize: 12.5, fontWeight: "700", color: colors.ink },
   sampleText: { fontSize: 12, color: colors.inkMuted, marginTop: 3, lineHeight: 16 },
   previewImage: { width: "100%", height: 200, marginTop: spacing.md, borderRadius: 10, backgroundColor: colors.surfaceMuted },
-  stepsWrap: { marginTop: spacing.lg, paddingHorizontal: spacing.xs },
   factRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: spacing.sm },
   factRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   factCategory: { fontSize: 13, fontWeight: "700", color: colors.ink },
