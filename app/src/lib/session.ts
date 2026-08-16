@@ -21,6 +21,14 @@ const DEMO_PATIENT_NAME = "Sunita Devi (demo)";
 export interface DemoSession {
   userId: string;
   patientId: string;
+  patientName: string;
+  workspaces: PatientWorkspace[];
+}
+
+export interface PatientWorkspace {
+  patientId: string;
+  displayName: string;
+  role: "supervising_health_worker" | "patient" | "doctor" | "family_member";
 }
 
 export type WorkspaceAccessState =
@@ -33,17 +41,12 @@ export async function inspectWorkspaceSession(): Promise<WorkspaceAccessState> {
   if (error) throw error;
   if (!session) return { status: "signed_out" };
 
-  const { data: relationships, error: relationshipError } = await supabase
-    .from("patient_relationships")
-    .select("patient_id")
-    .eq("user_id", session.user.id)
-    .limit(1);
-  if (relationshipError) throw relationshipError;
-  if (!relationships?.length) return { status: "needs_access", userId: session.user.id };
+  const workspace = await hydrateWorkspaceSession(session.user.id);
+  if (!workspace) return { status: "needs_access", userId: session.user.id };
 
   return {
     status: "ready",
-    session: { userId: session.user.id, patientId: relationships[0].patient_id as string },
+    session: workspace,
   };
 }
 
@@ -55,16 +58,8 @@ export async function ensureDemoSession(): Promise<DemoSession> {
   const session = existing ?? (await signInAnonymously());
   const userId = session.user.id;
 
-  const { data: rels, error: relErr } = await supabase
-    .from("patient_relationships")
-    .select("patient_id")
-    .eq("user_id", userId)
-    .limit(1);
-  if (relErr) throw relErr;
-
-  if (rels && rels.length > 0) {
-    return { userId, patientId: rels[0].patient_id as string };
-  }
+  const existingWorkspace = await hydrateWorkspaceSession(userId);
+  if (existingWorkspace) return existingWorkspace;
 
   const { data: patientId, error: workspaceError } = await supabase.rpc("create_care_workspace", {
     patient_display_name: DEMO_PATIENT_NAME,
@@ -77,7 +72,43 @@ export async function ensureDemoSession(): Promise<DemoSession> {
 
   await seedDemoEntries(String(patientId), userId);
 
-  return { userId, patientId: String(patientId) };
+  return (await hydrateWorkspaceSession(userId, String(patientId))) ?? {
+    userId,
+    patientId: String(patientId),
+    patientName: DEMO_PATIENT_NAME,
+    workspaces: [{ patientId: String(patientId), displayName: DEMO_PATIENT_NAME, role: "supervising_health_worker" }],
+  };
+}
+
+export async function hydrateWorkspaceSession(userId: string, preferredPatientId?: string): Promise<DemoSession | null> {
+  const { data, error } = await supabase
+    .from("patient_relationships")
+    .select("patient_id,role,patients(id,display_name)")
+    .eq("user_id", userId);
+  if (error) throw error;
+
+  const workspaces = (data ?? [])
+    .map((row) => {
+      const patientValue = row.patients as unknown;
+      const patient = Array.isArray(patientValue) ? patientValue[0] : patientValue;
+      const shaped = patient as { id?: string; display_name?: string } | null;
+      return {
+        patientId: String(shaped?.id ?? row.patient_id),
+        displayName: String(shaped?.display_name ?? "Patient workspace"),
+        role: row.role as PatientWorkspace["role"],
+      };
+    })
+    .filter((workspace, index, all) => all.findIndex((candidate) => candidate.patientId === workspace.patientId) === index)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  if (workspaces.length === 0) return null;
+  const selected = workspaces.find((workspace) => workspace.patientId === preferredPatientId) ?? workspaces[0];
+  return {
+    userId,
+    patientId: selected.patientId,
+    patientName: selected.displayName,
+    workspaces,
+  };
 }
 
 async function signInAnonymously() {

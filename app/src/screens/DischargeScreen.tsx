@@ -9,12 +9,14 @@ import {
   StructuredEntry,
   dischargeRedFlagsProtocol,
   dischargeSchemaCategories,
+  buildDeterministicHandoff,
+  compare,
   highestFlagLevel,
   runPipeline,
 } from "@continuum/engine";
 import { ocrProvider, llmProvider, providerMode, usingMocks } from "../lib/providers";
 import { supabase } from "../lib/supabase";
-import { insertEntryFromPipeline } from "../lib/entries";
+import { EntryCorrectionDraft, insertEntryFromPipeline, recordWorkflowEvent } from "../lib/entries";
 import { haptics } from "../lib/haptics";
 import { FlagBadge } from "../components/FlagBadge";
 import { Button } from "../components/Button";
@@ -51,9 +53,13 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
     handoffResult: HandoffResult;
   } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saved" | "queued">("idle");
   const [confirmedFacts, setConfirmedFacts] = useState<Set<number>>(new Set());
   const [clientEventId, setClientEventId] = useState<string | null>(null);
+  const [originalFacts, setOriginalFacts] = useState<FlaggedEntry[]>([]);
+  const [correctionReasons, setCorrectionReasons] = useState<Record<number, string>>({});
+  const [correctionIds, setCorrectionIds] = useState<Record<number, string>>({});
+  const runStartedAt = useRef(0);
 
   async function pickImage(fromCamera: boolean) {
     const perm = fromCamera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -69,9 +75,12 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
       setImageUri(result.assets[0].uri);
       setUseSample(false);
       setResult(null);
-      setSaved(false);
+      setSaveState("idle");
       setConfirmedFacts(new Set());
       setClientEventId(null);
+      setOriginalFacts([]);
+      setCorrectionReasons({});
+      setCorrectionIds({});
       haptics.light();
     }
   }
@@ -89,11 +98,16 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
   }
 
   async function runDischarge() {
+    runStartedAt.current = Date.now();
+    const eventId = Crypto.randomUUID();
     setRunning(true);
     setResult(null);
-    setSaved(false);
+    setSaveState("idle");
     setConfirmedFacts(new Set());
-    setClientEventId(null);
+    setClientEventId(eventId);
+    setOriginalFacts([]);
+    setCorrectionReasons({});
+    setCorrectionIds({});
     beginStepAnimation();
     try {
       const sample = SAMPLE_SHEETS[selectedSample];
@@ -113,15 +127,25 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
         llmProvider,
       });
       setResult(pipelineResult);
+      setOriginalFacts(pipelineResult.flaggedEntries.map((fact) => ({ ...fact })));
       setConfirmedFacts(new Set());
-      setClientEventId(Crypto.randomUUID());
       endStepAnimation(PIPELINE_STAGES.length);
       const worst = highestFlagLevel(pipelineResult.flaggedEntries);
       if (worst === "red") haptics.warning();
       else haptics.success();
+      await recordWorkflowEvent({
+        patientId,
+        userId,
+        eventName: "discharge_pipeline",
+        success: true,
+        durationMs: Date.now() - runStartedAt.current,
+        clientEventId: eventId,
+        metadata: { provider: providerMode, fact_count: pipelineResult.flaggedEntries.length },
+      }).catch(() => undefined);
     } catch (e) {
       endStepAnimation(-1);
       haptics.error();
+      await recordWorkflowEvent({ patientId, userId, eventName: "discharge_pipeline", success: false, durationMs: Date.now() - runStartedAt.current, metadata: { provider: providerMode } }).catch(() => undefined);
       Alert.alert("Pipeline failed", String(e));
     } finally {
       setRunning(false);
@@ -136,16 +160,33 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
       if (!useSample && imageUri) {
         mediaRef = await tryUploadPhoto(patientId, imageUri);
       }
-      await insertEntryFromPipeline({
+      const corrections: EntryCorrectionDraft[] = result.flaggedEntries.flatMap((fact, index) => {
+        const original = originalFacts[index];
+        if (!original || String(original.value) === String(fact.value)) return [];
+        return [{
+          clientCorrectionId: correctionIds[index] ?? Crypto.randomUUID(),
+          factIndex: index,
+          originalFact: original as unknown as Record<string, unknown>,
+          correctedFact: fact as unknown as Record<string, unknown>,
+          reason: correctionReasons[index].trim(),
+          correctedBy: userId,
+        }];
+      });
+      const currentHandoff = corrections.length > 0
+        ? buildDeterministicHandoff(result.flaggedEntries, "patient")
+        : result.handoffResult;
+      const savedEntry = await insertEntryFromPipeline({
         patientId,
         userId,
         rawCapture: result.rawCapture,
         structuredEntries: result.structuredEntries,
         flaggedEntries: result.flaggedEntries,
-        handoffResult: result.handoffResult,
+        handoffResult: currentHandoff,
         protocolId: dischargeRedFlagsProtocol.id,
+        protocolVersionId: dischargeRedFlagsProtocol.id,
         mediaRef,
         clientEventId,
+        corrections,
         review: {
           status: "human_verified",
           reviewedBy: userId,
@@ -153,7 +194,8 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
           extractionProvider: providerMode,
         },
       });
-      setSaved(true);
+      setResult((current) => current ? { ...current, handoffResult: currentHandoff } : current);
+      setSaveState(savedEntry.sync_status === "queued" ? "queued" : "saved");
       haptics.success();
     } catch (e) {
       haptics.error();
@@ -163,7 +205,34 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
     }
   }
 
-  const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length);
+  const correctionReasonsComplete = Object.values(correctionReasons).every((reason) => reason.trim().length >= 3);
+  const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length && correctionReasonsComplete);
+
+  function editFact(index: number, rawValue: string) {
+    setResult((current) => {
+      if (!current) return current;
+      const original = originalFacts[index];
+      const value = typeof original?.value === "number" && rawValue.trim() !== "" && Number.isFinite(Number(rawValue)) ? Number(rawValue) : rawValue;
+      const structuredEntries = current.structuredEntries.map((entry, entryIndex) => entryIndex === index ? { ...entry, value, evidenceVerified: false, extractionConfidence: "review" as const } : entry);
+      const flaggedEntries = compare(structuredEntries, dischargeRedFlagsProtocol);
+      return { ...current, structuredEntries, flaggedEntries };
+    });
+    setConfirmedFacts((current) => {
+      const next = new Set(current);
+      next.delete(index);
+      return next;
+    });
+    setCorrectionReasons((current) => {
+      if (String(originalFacts[index]?.value) === rawValue) {
+        const next = { ...current };
+        delete next[index];
+        return next;
+      }
+      return Object.prototype.hasOwnProperty.call(current, index) ? current : { ...current, [index]: "" };
+    });
+    setCorrectionIds((current) => Object.prototype.hasOwnProperty.call(current, index) ? current : { ...current, [index]: Crypto.randomUUID() });
+    setSaveState("idle");
+  }
 
   function toggleConfirmedFact(index: number) {
     setConfirmedFacts((current) => {
@@ -276,14 +345,29 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
           </Card>
 
           <Text style={styles.sectionLabel}>4 · Verify evidence</Text>
-          <VerificationPanel facts={result.flaggedEntries} confirmed={confirmedFacts} onToggle={toggleConfirmedFact} />
+          <VerificationPanel
+            facts={result.flaggedEntries}
+            confirmed={confirmedFacts}
+            onToggle={toggleConfirmedFact}
+            onEdit={editFact}
+            correctionReasons={correctionReasons}
+            onCorrectionReasonChange={(index, reason) => {
+              setCorrectionReasons((current) => ({ ...current, [index]: reason }));
+              setConfirmedFacts((current) => {
+                const next = new Set(current);
+                next.delete(index);
+                return next;
+              });
+              setSaveState("idle");
+            }}
+          />
 
           <Button
-            label={saved ? "✓ Saved to timeline" : verificationComplete ? "Save verified entry" : "Verify every fact to save"}
+            label={saveState === "saved" ? "✓ Saved to timeline" : saveState === "queued" ? "✓ Encrypted and queued for sync" : verificationComplete ? "Save verified entry" : "Verify every fact and explain corrections"}
             onPress={save}
             loading={saving}
-            disabled={saved || !verificationComplete}
-            variant={saved ? "secondary" : "primary"}
+            disabled={saveState !== "idle" || !verificationComplete}
+            variant={saveState !== "idle" ? "secondary" : "primary"}
           />
         </>
       )}

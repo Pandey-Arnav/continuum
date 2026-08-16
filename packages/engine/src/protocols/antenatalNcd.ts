@@ -136,6 +136,12 @@ export const antenatalNcdProtocol: Protocol = {
   name: "Antenatal / NCD Community Screening Protocol",
   description:
     "Hardcoded screening checklist used by community health workers during home visits, covering antenatal danger signs and basic NCD (hypertension/diabetes) screening.",
+  governance: {
+    version: "1.0.0",
+    status: "draft_unapproved",
+    sourceTitle: "Illustrative hackathon rule set; clinical localization and approval required",
+    sourceUri: "https://www.who.int/teams/digital-health-and-innovation/smart-guidelines",
+  },
   rules,
 };
 

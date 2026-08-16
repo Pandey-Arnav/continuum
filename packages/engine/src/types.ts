@@ -54,6 +54,16 @@ export interface Protocol {
   id: string;
   name: string;
   description: string;
+  governance: {
+    version: string;
+    status: "draft_unapproved" | "clinically_approved" | "retired";
+    sourceTitle: string;
+    sourceUri?: string;
+    jurisdiction?: string;
+    approvedBy?: string;
+    approvedAt?: string;
+    reviewDueAt?: string;
+  };
   rules: Rule[];
 }
 

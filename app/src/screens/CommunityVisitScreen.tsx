@@ -15,12 +15,14 @@ import {
   StructuredEntry,
   antenatalNcdProtocol,
   antenatalNcdSchemaCategories,
+  buildDeterministicHandoff,
+  compare,
   highestFlagLevel,
   runPipeline,
 } from "@continuum/engine";
 import { sttProvider, llmProvider, providerMode, usingMocks } from "../lib/providers";
 import { supabase } from "../lib/supabase";
-import { insertEntryFromPipeline } from "../lib/entries";
+import { EntryCorrectionDraft, insertEntryFromPipeline, recordWorkflowEvent } from "../lib/entries";
 import { haptics } from "../lib/haptics";
 import { FlagBadge } from "../components/FlagBadge";
 import { Button } from "../components/Button";
@@ -61,9 +63,13 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     handoffResult: HandoffResult;
   } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saved" | "queued">("idle");
   const [confirmedFacts, setConfirmedFacts] = useState<Set<number>>(new Set());
   const [clientEventId, setClientEventId] = useState<string | null>(null);
+  const [originalFacts, setOriginalFacts] = useState<FlaggedEntry[]>([]);
+  const [correctionReasons, setCorrectionReasons] = useState<Record<number, string>>({});
+  const [correctionIds, setCorrectionIds] = useState<Record<number, string>>({});
+  const runStartedAt = useRef(0);
 
   const useSample = captureMode === "sample";
 
@@ -79,7 +85,7 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
       audioRecorder.record();
       setCaptureMode("record");
       setResult(null);
-      setSaved(false);
+      setSaveState("idle");
       haptics.medium();
     } catch (e) {
       haptics.error();
@@ -107,11 +113,16 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   }
 
   async function runVisit() {
+    runStartedAt.current = Date.now();
+    const eventId = Crypto.randomUUID();
     setRunning(true);
     setResult(null);
-    setSaved(false);
+    setSaveState("idle");
     setConfirmedFacts(new Set());
-    setClientEventId(null);
+    setClientEventId(eventId);
+    setOriginalFacts([]);
+    setCorrectionReasons({});
+    setCorrectionIds({});
     beginStepAnimation();
     try {
       const sample = SAMPLE_NOTES[selectedSample];
@@ -133,15 +144,25 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
         llmProvider,
       });
       setResult(pipelineResult);
+      setOriginalFacts(pipelineResult.flaggedEntries.map((fact) => ({ ...fact })));
       setConfirmedFacts(new Set());
-      setClientEventId(Crypto.randomUUID());
       endStepAnimation(PIPELINE_STAGES.length);
       const worst = highestFlagLevel(pipelineResult.flaggedEntries);
       if (worst === "red") haptics.warning();
       else haptics.success();
+      await recordWorkflowEvent({
+        patientId,
+        userId,
+        eventName: "chw_pipeline",
+        success: true,
+        durationMs: Date.now() - runStartedAt.current,
+        clientEventId: eventId,
+        metadata: { provider: providerMode, fact_count: pipelineResult.flaggedEntries.length },
+      }).catch(() => undefined);
     } catch (e) {
       endStepAnimation(-1);
       haptics.error();
+      await recordWorkflowEvent({ patientId, userId, eventName: "chw_pipeline", success: false, durationMs: Date.now() - runStartedAt.current, metadata: { provider: providerMode } }).catch(() => undefined);
       Alert.alert("Pipeline failed", String(e));
     } finally {
       setRunning(false);
@@ -156,16 +177,33 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
       if (!useSample && recordedUri) {
         mediaRef = await tryUploadAudio(patientId, recordedUri);
       }
-      await insertEntryFromPipeline({
+      const corrections: EntryCorrectionDraft[] = result.flaggedEntries.flatMap((fact, index) => {
+        const original = originalFacts[index];
+        if (!original || String(original.value) === String(fact.value)) return [];
+        return [{
+          clientCorrectionId: correctionIds[index] ?? Crypto.randomUUID(),
+          factIndex: index,
+          originalFact: original as unknown as Record<string, unknown>,
+          correctedFact: fact as unknown as Record<string, unknown>,
+          reason: correctionReasons[index].trim(),
+          correctedBy: userId,
+        }];
+      });
+      const currentHandoff = corrections.length > 0
+        ? buildDeterministicHandoff(result.flaggedEntries, "supervising_health_worker")
+        : result.handoffResult;
+      const savedEntry = await insertEntryFromPipeline({
         patientId,
         userId,
         rawCapture: result.rawCapture,
         structuredEntries: result.structuredEntries,
         flaggedEntries: result.flaggedEntries,
-        handoffResult: result.handoffResult,
+        handoffResult: currentHandoff,
         protocolId: antenatalNcdProtocol.id,
+        protocolVersionId: antenatalNcdProtocol.id,
         mediaRef,
         clientEventId,
+        corrections,
         review: {
           status: "human_verified",
           reviewedBy: userId,
@@ -173,7 +211,8 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
           extractionProvider: providerMode,
         },
       });
-      setSaved(true);
+      setResult((current) => current ? { ...current, handoffResult: currentHandoff } : current);
+      setSaveState(savedEntry.sync_status === "queued" ? "queued" : "saved");
       haptics.success();
     } catch (e) {
       haptics.error();
@@ -184,7 +223,34 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   }
 
   const canRun = useSample || !!recordedUri;
-  const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length);
+  const correctionReasonsComplete = Object.values(correctionReasons).every((reason) => reason.trim().length >= 3);
+  const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length && correctionReasonsComplete);
+
+  function editFact(index: number, rawValue: string) {
+    setResult((current) => {
+      if (!current) return current;
+      const original = originalFacts[index];
+      const value = typeof original?.value === "number" && rawValue.trim() !== "" && Number.isFinite(Number(rawValue)) ? Number(rawValue) : rawValue;
+      const structuredEntries = current.structuredEntries.map((entry, entryIndex) => entryIndex === index ? { ...entry, value, evidenceVerified: false, extractionConfidence: "review" as const } : entry);
+      const flaggedEntries = compare(structuredEntries, antenatalNcdProtocol);
+      return { ...current, structuredEntries, flaggedEntries };
+    });
+    setConfirmedFacts((current) => {
+      const next = new Set(current);
+      next.delete(index);
+      return next;
+    });
+    setCorrectionReasons((current) => {
+      if (String(originalFacts[index]?.value) === rawValue) {
+        const next = { ...current };
+        delete next[index];
+        return next;
+      }
+      return Object.prototype.hasOwnProperty.call(current, index) ? current : { ...current, [index]: "" };
+    });
+    setCorrectionIds((current) => Object.prototype.hasOwnProperty.call(current, index) ? current : { ...current, [index]: Crypto.randomUUID() });
+    setSaveState("idle");
+  }
 
   function toggleConfirmedFact(index: number) {
     setConfirmedFacts((current) => {
@@ -292,14 +358,29 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
           </Card>
 
           <Text style={styles.sectionLabel}>4 · Verify evidence</Text>
-          <VerificationPanel facts={result.flaggedEntries} confirmed={confirmedFacts} onToggle={toggleConfirmedFact} />
+          <VerificationPanel
+            facts={result.flaggedEntries}
+            confirmed={confirmedFacts}
+            onToggle={toggleConfirmedFact}
+            onEdit={editFact}
+            correctionReasons={correctionReasons}
+            onCorrectionReasonChange={(index, reason) => {
+              setCorrectionReasons((current) => ({ ...current, [index]: reason }));
+              setConfirmedFacts((current) => {
+                const next = new Set(current);
+                next.delete(index);
+                return next;
+              });
+              setSaveState("idle");
+            }}
+          />
 
           <Button
-            label={saved ? "✓ Saved to timeline" : verificationComplete ? "Save verified entry" : "Verify every fact to save"}
+            label={saveState === "saved" ? "✓ Saved to timeline" : saveState === "queued" ? "✓ Encrypted and queued for sync" : verificationComplete ? "Save verified entry" : "Verify every fact and explain corrections"}
             onPress={save}
             loading={saving}
-            disabled={saved || !verificationComplete}
-            variant={saved ? "secondary" : "primary"}
+            disabled={saveState !== "idle" || !verificationComplete}
+            variant={saveState !== "idle" ? "secondary" : "primary"}
           />
         </>
       )}

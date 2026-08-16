@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "tsx src/__tests__/rules.ts && tsx src/__tests__/smoke.ts && tsx src/__tests__/structure.ts && tsx src/__tests__/longitudinal.ts && tsx src/__tests__/remote.ts",
+    "test": "tsx src/__tests__/rules.ts && tsx src/__tests__/smoke.ts && tsx src/__tests__/structure.ts && tsx src/__tests__/longitudinal.ts && tsx src/__tests__/remote.ts && tsx src/__tests__/evaluation.ts && tsx src/__tests__/fhir.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
