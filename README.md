@@ -77,21 +77,24 @@ Edit `app/.env`:
 |---|---|---|
 | `EXPO_PUBLIC_SUPABASE_URL` | **Yes** | App shows a setup screen |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | **Yes** | App shows a setup screen |
-| `EXPO_PUBLIC_ANTHROPIC_API_KEY` | No | `structure()`/`handoff()` use a heuristic mock extractor instead of Claude — real understanding of arbitrary spoken/written content needs this |
-| `EXPO_PUBLIC_SARVAM_API_KEY` | No | Voice capture uses a canned sample transcript instead of real Hindi/Marathi→English STT |
-| `EXPO_PUBLIC_ELEVENLABS_API_KEY` | No | Alternative to Sarvam (used only if Sarvam's key isn't set). Transcribes but does **not** translate — pair with an Anthropic key so `structure()` can read the non-English transcript directly |
-| `EXPO_PUBLIC_GOOGLE_VISION_API_KEY` | No | Photo capture uses a canned sample discharge-sheet text instead of real OCR |
+| `EXPO_PUBLIC_GEMINI_API_KEY` | No — but recommended | Covers STT + OCR + structuring/handoff all by itself (Gemini is multimodal: audio, image, and text through one key). **Free, no credit card**, from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Used as the fallback for each role below if that role's more specific key isn't set. |
+| `EXPO_PUBLIC_ANTHROPIC_API_KEY` | No | Takes priority over Gemini for `structure()`/`handoff()` if set. Paid, no lasting free tier. |
+| `EXPO_PUBLIC_SARVAM_API_KEY` | No | Takes priority over Gemini/ElevenLabs for STT if set — translates Hindi/Marathi→English directly. |
+| `EXPO_PUBLIC_ELEVENLABS_API_KEY` | No | Takes priority over Gemini for STT if Sarvam's key isn't set. Transcribes but does **not** translate — pair with a real LLM key so `structure()` can read the non-English transcript directly. |
+| `EXPO_PUBLIC_GOOGLE_VISION_API_KEY` | No | Takes priority over Gemini for OCR if set. Free tier exists but requires a Google Cloud billing account (card on file) even to get the key. |
 
 The app is **mock-first**: with only the two Supabase variables set, every
 scenario runs end to end (sample voice note or sample discharge sheet →
 structured → flagged → handed off → saved to the real Supabase-backed
 timeline) with zero other API keys. **But recording your own real voice note
-and having it actually transcribed/understood requires real keys** — without
-`EXPO_PUBLIC_SARVAM_API_KEY` or `EXPO_PUBLIC_ELEVENLABS_API_KEY`, the mock STT
-provider ignores what you actually said and returns a canned transcript;
-without `EXPO_PUBLIC_ANTHROPIC_API_KEY`, extraction is regex/keyword matching
-tuned to the two demo protocols, not general understanding. Each provider
-upgrades independently — add one key at a time with no code changes.
+or photo and having it actually transcribed/understood requires a real key**
+— without one of the STT keys, the mock provider ignores what you actually
+said/photographed and returns canned demo content; without an LLM key,
+extraction is regex/keyword matching tuned to the two demo protocols, not
+general understanding. **Easiest path: set only `EXPO_PUBLIC_GEMINI_API_KEY`**
+— every role upgrades from mock to real with that one free key. Each
+provider upgrades independently on top of that — add a more specific key
+later with no code changes if you want it.
 
 ### 4. Run it
 

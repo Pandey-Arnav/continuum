@@ -10,5 +10,6 @@ export { createSarvamSTTProvider } from "./providers/sarvam";
 export { createElevenLabsSTTProvider } from "./providers/elevenlabs";
 export { createGoogleVisionOCRProvider } from "./providers/googleVision";
 export { createClaudeLLMProvider } from "./providers/claude";
+export { createGeminiSTTProvider, createGeminiOCRProvider, createGeminiLLMProvider } from "./providers/gemini";
 export { antenatalNcdProtocol, antenatalNcdSchemaCategories } from "./protocols/antenatalNcd";
 export { dischargeRedFlagsProtocol, dischargeSchemaCategories } from "./protocols/dischargeRedFlags";

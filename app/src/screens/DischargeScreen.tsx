@@ -99,7 +99,7 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
         schemaContext: {
           protocolId: dischargeRedFlagsProtocol.id,
           categories: dischargeSchemaCategories,
-          instructions: "Extract medication changes, follow-up dates, and red-flag symptoms only.",
+          instructions: "Extract the diagnosis, medication changes, follow-up dates, and red-flag symptoms.",
         },
         protocol: dischargeRedFlagsProtocol,
         recipientRole: "patient",

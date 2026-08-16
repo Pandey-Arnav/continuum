@@ -9,6 +9,7 @@ export const env = {
   sarvamApiKey: process.env.EXPO_PUBLIC_SARVAM_API_KEY ?? "",
   elevenlabsApiKey: process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY ?? "",
   googleVisionApiKey: process.env.EXPO_PUBLIC_GOOGLE_VISION_API_KEY ?? "",
+  geminiApiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY ?? "",
 };
 
 export const hasSupabaseConfig = Boolean(env.supabaseUrl && env.supabaseAnonKey);
