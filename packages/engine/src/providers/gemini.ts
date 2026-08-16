@@ -5,11 +5,16 @@
 // juggling separate Sarvam/Vision/Claude keys if you only want one bill.
 //
 // Verified against the live API (2026): "gemini-2.5-flash" and
-// "gemini-2.0-flash" are retired for new API keys — use "gemini-flash-latest",
-// which Google keeps pointed at their current recommended Flash model.
+// "gemini-2.0-flash" are retired for new API keys. "gemini-flash-latest"
+// works but currently resolves to a preview-tier model (gemini-3.7-flash)
+// with a very small free-tier quota (20 requests/day, hit during testing).
+// "gemini-flash-lite-latest" resolves to gemini-3.5-flash-lite instead — a
+// separate quota bucket, and Lite models are specifically meant for
+// higher-volume free-tier use. Prefer this default; override the model
+// param if you have a paid tier and want higher quality.
 import { AudioInput, ImageInput, LLMProvider, OCRProvider, OCRResult, STTProvider, STTResult } from "./types";
 
-const DEFAULT_MODEL = "gemini-flash-latest";
+const DEFAULT_MODEL = "gemini-flash-lite-latest";
 
 async function callGemini(apiKey: string, model: string, parts: Record<string, unknown>[]): Promise<string> {
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
