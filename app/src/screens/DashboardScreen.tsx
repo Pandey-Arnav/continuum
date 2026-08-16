@@ -112,11 +112,15 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [justArrivedIds, setJustArrivedIds] = useState<Set<string>>(new Set());
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
   const [, forceTick] = useState(0);
 
   const load = useCallback(async () => {
     const rows = await fetchEntries(patientId);
     setEntries(rows);
+    setLastUpdated(new Date());
   }, [patientId]);
 
   useEffect(() => {
@@ -129,6 +133,7 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         return [row, ...prev];
       });
+      setLastUpdated(new Date());
       haptics.light();
       setJustArrivedIds((prev) => new Set(prev).add(row.id));
       setTimeout(() => {
@@ -196,6 +201,16 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
     setExpandedId(expandedId === id ? null : id);
   };
 
+  function toggleInsights() {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setInsightsOpen((v) => !v);
+  }
+
+  function toggleAccess() {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setAccessOpen((v) => !v);
+  }
+
   async function createInvite() {
     setCreatingInvite(true);
     try {
@@ -220,7 +235,7 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
         <ScreenHeader
           icon="🗂️"
           iconTint={colors.primarySoft}
-          title="Timeline"
+          title="Care Dashboard"
           subtitle="One engine, two entry points — every flag traces to its input and rule."
         />
         <View style={{ paddingTop: spacing.md }}>
@@ -232,40 +247,55 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
     );
   }
 
-  return (
-    <View style={styles.container}>
+  const header = (
+    <View>
       <ScreenHeader
         icon="🗂️"
         iconTint={colors.primarySoft}
-        title="Timeline"
+        title="Care Dashboard"
         subtitle="One engine, two entry points — every flag traces to its input and rule."
       />
 
       {entries.length > 0 && (
-        <View style={styles.statsRow}>
-          <StatTile count={entries.length} label="Total entries" icon="▦" color={colors.primary} badge="Timeline" />
-          <StatTile count={stats.red} label="Needs attention" icon="!" color={colors.danger} badge="Priority" />
-          <StatTile count={stats.amber} label="Worth review" icon="◆" color="#F5A400" badge="Review" />
-          <StatTile count={stats.green} label="Stable" icon="✓" color="#22BFAE" badge="On track" />
-          <StatTile count={stats.chw} label="CHW visits" icon="♬" color={colors.accent} badge="Voice" />
-          <StatTile count={stats.discharge} label="Discharges" icon="▤" color="#EC537A" badge="Documents" />
+        <View
+          style={styles.summaryStrip}
+          accessibilityRole="summary"
+          accessibilityLabel={`${stats.red} priority, ${stats.amber} to review, ${stats.green} stable, ${entries.length} total entries`}
+        >
+          <SummaryStat count={stats.red} label="Priority" color={colors.danger} />
+          <SummaryDivider />
+          <SummaryStat count={stats.amber} label="Review" color="#B4790A" />
+          <SummaryDivider />
+          <SummaryStat count={stats.green} label="Stable" color={colors.flag.green.fg} />
+          <SummaryDivider />
+          <SummaryStat count={entries.length} label="Total" color={colors.ink} />
+          {lastUpdated && <Text style={styles.lastUpdated}>Updated {formatTime(lastUpdated)}</Text>}
         </View>
       )}
 
       {entries.length > 0 && (
-        <View style={styles.insightsRow}>
-          <SeverityPanel red={stats.red} amber={stats.amber} green={stats.green} />
-          <SourcePanel chw={stats.chw} discharge={stats.discharge} />
-          <TracePanel traceable={stats.traceable} total={entries.length} />
-        </View>
+        <CollapsibleSection
+          title="Care status & insights"
+          note="Flag mix, source mix, explainability, continuity signals"
+          open={insightsOpen}
+          onToggle={toggleInsights}
+        >
+          <View style={styles.insightsRow}>
+            <SeverityPanel red={stats.red} amber={stats.amber} green={stats.green} />
+            <SourcePanel chw={stats.chw} discharge={stats.discharge} />
+            <TracePanel traceable={stats.traceable} total={entries.length} />
+          </View>
+          {longitudinalSignals.length > 0 && <LongitudinalPanel signals={longitudinalSignals} />}
+        </CollapsibleSection>
       )}
 
-      {longitudinalSignals.length > 0 && <LongitudinalPanel signals={longitudinalSignals} />}
-
-      <View style={styles.accessPanel}>
+      <CollapsibleSection
+        title="Workspace access"
+        note="Create a one-time patient access code"
+        open={accessOpen}
+        onToggle={toggleAccess}
+      >
         <View style={styles.accessCopy}>
-          <Text style={styles.longitudinalEyebrow}>ROLE-BASED ACCESS</Text>
-          <Text style={styles.accessTitle}>Create a one-time patient access code</Text>
           <Text style={styles.accessSubtitle}>Only a related clinician or CHW can create a code. It expires after seven days and can be claimed once.</Text>
         </View>
         <SegmentedControl
@@ -278,9 +308,11 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
             { value: "supervising_health_worker", label: "CHW" },
           ]}
         />
-        <Button label={creatingInvite ? "Creating code…" : "Create access code"} onPress={createInvite} loading={creatingInvite} fullWidth={false} />
+        <View style={{ marginTop: spacing.sm }}>
+          <Button label={creatingInvite ? "Creating code…" : "Create access code"} onPress={createInvite} loading={creatingInvite} fullWidth={false} />
+        </View>
         {inviteCode && <View style={styles.inviteCode}><Text style={styles.inviteCodeLabel}>ONE-TIME CODE</Text><Text selectable style={styles.inviteCodeText}>{inviteCode}</Text></View>}
-      </View>
+      </CollapsibleSection>
 
       <View style={styles.activityToolbar}>
         <View style={styles.activityHeading}>
@@ -288,7 +320,7 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
           <Text style={styles.activitySubtitle}>Live entries from every capture pathway</Text>
         </View>
         <View style={styles.searchBox}>
-          <Text style={styles.searchGlyph}>⌕</Text>
+          <Text style={styles.searchGlyph} accessibilityElementsHidden>⌕</Text>
           <TextInput
             value={query}
             onChangeText={setQuery}
@@ -320,13 +352,18 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
           />
         </View>
       </View>
+    </View>
+  );
 
+  return (
+    <View style={styles.container}>
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
         stickySectionHeadersEnabled
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-        contentContainerStyle={{ paddingBottom: 40, paddingTop: spacing.md }}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        ListHeaderComponent={header}
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>🗂️</Text>
@@ -358,6 +395,7 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
               onPress={() => toggleExpand(item.id)}
               accessibilityRole="button"
               accessibilityLabel={`${SOURCE_LABEL[item.source_type]} at ${formatTime(created)}, ${item.flag_level} flag. ${whatHappened}`}
+              accessibilityHint={isExpanded ? "Collapses evidence detail" : "Expands to show evidence and the triggering rule"}
             >
               <View style={[styles.accentBar, { backgroundColor: palette.dot }]} />
               <View style={styles.cardBody}>
@@ -428,6 +466,53 @@ export function DashboardScreen({ patientId }: { patientId: string }) {
   );
 }
 
+function SummaryStat({ count, label, color }: { count: number; label: string; color: string }) {
+  return (
+    <View style={styles.summaryStat}>
+      <Text style={[styles.summaryStatCount, { color }]}>{count}</Text>
+      <Text style={styles.summaryStatLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function SummaryDivider() {
+  return <View style={styles.summaryDivider} />;
+}
+
+function CollapsibleSection({
+  title,
+  note,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  note: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.collapsible}>
+      <Pressable
+        style={({ pressed }) => [styles.collapsibleHeader, pressed && { opacity: 0.7 }]}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`${title}${open ? ", expanded" : ", collapsed"}`}
+        accessibilityHint={open ? "Collapses this section" : "Expands this section"}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.collapsibleTitle}>{title}</Text>
+          <Text style={styles.collapsibleNote}>{note}</Text>
+        </View>
+        <Text style={styles.collapsibleChevron}>{open ? "▲" : "▼"}</Text>
+      </Pressable>
+      {open && <View style={styles.collapsibleBody}>{children}</View>}
+    </View>
+  );
+}
+
 function LongitudinalPanel({ signals }: { signals: LongitudinalSignal[] }) {
   return (
     <View style={styles.longitudinalPanel}>
@@ -451,19 +536,6 @@ function LongitudinalPanel({ signals }: { signals: LongitudinalSignal[] }) {
           </View>
         ))}
       </View>
-    </View>
-  );
-}
-
-function StatTile({ count, label, icon, color, badge }: { count: number; label: string; icon: string; color: string; badge: string }) {
-  return (
-    <View style={styles.statTile}>
-      <View style={[styles.statIcon, { backgroundColor: `${color}18` }]}>
-        <Text style={[styles.statIconText, { color }]}>{icon}</Text>
-      </View>
-      <Text style={styles.statCount}>{count.toLocaleString()}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-      <View style={[styles.statBadge, { backgroundColor: color }]}><Text style={styles.statBadgeText}>{badge}</Text></View>
     </View>
   );
 }
@@ -553,44 +625,55 @@ const styles = StyleSheet.create({
     maxWidth: 1180,
     alignSelf: "center",
     backgroundColor: colors.bg,
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
   },
 
-  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: spacing.md },
-  statTile: {
-    flexGrow: 1,
-    flexBasis: 128,
-    minWidth: 118,
-    minHeight: 116,
+  summaryStrip: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    flexWrap: "wrap",
+    gap: spacing.md,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 10,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.lg,
+    marginHorizontal: spacing.lg,
     ...(shadow.sm as object),
   },
-  statIcon: { width: 34, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center", marginBottom: 5 },
-  statIconText: { fontSize: 17, fontWeight: "900" },
-  statCount: { fontSize: 21, fontWeight: "800", color: colors.ink, letterSpacing: -0.5 },
-  statLabel: { fontSize: 9.5, fontWeight: "700", color: colors.inkMuted, marginTop: 1 },
-  statBadge: { borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 2, marginTop: 5 },
-  statBadgeText: { color: "#FFFFFF", fontSize: 7.5, fontWeight: "800" },
+  summaryStat: { alignItems: "flex-start" },
+  summaryStatCount: { fontSize: 19, fontWeight: "800", letterSpacing: -0.4 },
+  summaryStatLabel: { fontSize: 9.5, fontWeight: "700", color: colors.inkMuted, marginTop: 1 },
+  summaryDivider: { width: 1, height: 26, backgroundColor: colors.border },
+  lastUpdated: { marginLeft: "auto", fontSize: 10.5, color: colors.inkFaint, fontWeight: "600" },
 
-  insightsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: spacing.md },
+  collapsible: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: spacing.sm,
+    marginHorizontal: spacing.lg,
+    overflow: "hidden",
+  },
+  collapsibleHeader: { flexDirection: "row", alignItems: "center", padding: spacing.md, gap: spacing.sm },
+  collapsibleTitle: { fontSize: 12.5, fontWeight: "800", color: colors.ink },
+  collapsibleNote: { fontSize: 10.5, color: colors.inkFaint, marginTop: 1 },
+  collapsibleChevron: { fontSize: 11, color: colors.inkFaint },
+  collapsibleBody: { paddingHorizontal: spacing.md, paddingBottom: spacing.md },
+
+  insightsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: spacing.sm },
   insightCard: {
     flex: 1,
-    flexBasis: 240,
-    minWidth: 220,
-    minHeight: 158,
-    backgroundColor: colors.surface,
+    flexBasis: 220,
+    minWidth: 200,
+    minHeight: 150,
+    backgroundColor: colors.surfaceMuted,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.md,
-    ...(shadow.sm as object),
   },
   traceCard: { backgroundColor: colors.accent, borderColor: colors.accent },
   insightHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
@@ -616,7 +699,7 @@ const styles = StyleSheet.create({
   traceMark: { width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.25)" },
   traceMarkText: { color: colors.onAccent, fontSize: 20, fontWeight: "900" },
   traceNote: { color: "rgba(255,255,255,0.78)", fontSize: 8.5, lineHeight: 12, marginTop: 9 },
-  longitudinalPanel: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.md, ...(shadow.sm as object) },
+  longitudinalPanel: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
   longitudinalHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md, marginBottom: spacing.sm },
   longitudinalEyebrow: { color: colors.accent, fontSize: 7.5, fontWeight: "900", letterSpacing: 0.8 },
   longitudinalTitle: { color: colors.ink, fontSize: 13.5, fontWeight: "800", marginTop: 2 },
@@ -624,32 +707,42 @@ const styles = StyleSheet.create({
   longitudinalCount: { backgroundColor: colors.accentSoft, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 5 },
   longitudinalCountText: { color: colors.accent, fontSize: 7.5, fontWeight: "900" },
   longitudinalGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  longitudinalSignal: { flex: 1, flexBasis: 240, minWidth: 220, flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, backgroundColor: colors.surfaceMuted, borderRadius: radius.md, padding: spacing.sm, borderWidth: 1, borderColor: colors.border },
+  longitudinalSignal: { flex: 1, flexBasis: 240, minWidth: 220, flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.sm, borderWidth: 1, borderColor: colors.border },
   longitudinalSignalTitle: { color: colors.ink, fontSize: 10.5, fontWeight: "800" },
   longitudinalSignalText: { color: colors.inkMuted, fontSize: 9, lineHeight: 13, marginTop: 2 },
   longitudinalEvidence: { color: colors.primaryDark, fontSize: 8, fontWeight: "800", marginTop: 4 },
-  accessPanel: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.md, ...(shadow.sm as object) },
-  accessCopy: { flex: 1, flexBasis: 250, minWidth: 220 },
-  accessTitle: { color: colors.ink, fontSize: 12.5, fontWeight: "800", marginTop: 2 },
-  accessSubtitle: { color: colors.inkMuted, fontSize: 9.5, lineHeight: 14, marginTop: 2 },
-  inviteCode: { backgroundColor: colors.primarySoft, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7, minWidth: 150 },
+
+  accessCopy: { marginBottom: spacing.sm },
+  accessSubtitle: { color: colors.inkMuted, fontSize: 11.5, lineHeight: 16 },
+  inviteCode: { marginTop: spacing.sm, backgroundColor: colors.primarySoft, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7, alignSelf: "flex-start" },
   inviteCodeLabel: { color: colors.primaryDark, fontSize: 7, fontWeight: "900", letterSpacing: 0.8 },
   inviteCodeText: { color: colors.ink, fontFamily: typography.mono.fontFamily, fontSize: 11, fontWeight: "800", marginTop: 2 },
-  activityToolbar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, ...(shadow.sm as object) },
+
+  activityToolbar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
   activityHeading: { flexGrow: 1 },
-  activityTitle: { color: colors.ink, fontSize: 12.5, fontWeight: "800" },
-  activitySubtitle: { color: colors.inkFaint, fontSize: 9.5, marginTop: 2 },
-  searchBox: { flexDirection: "row", alignItems: "center", width: 270, maxWidth: "100%", minHeight: 38, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surfaceMuted, paddingHorizontal: 10 },
+  activityTitle: { color: colors.ink, fontSize: 13.5, fontWeight: "800" },
+  activitySubtitle: { color: colors.inkFaint, fontSize: 10.5, marginTop: 2 },
+  searchBox: { flexDirection: "row", alignItems: "center", width: 270, maxWidth: "100%", minHeight: 40, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, paddingHorizontal: 10 },
   searchGlyph: { color: colors.inkMuted, fontSize: 16, marginRight: 6 },
-  searchInput: { flex: 1, color: colors.ink, fontSize: 11, paddingVertical: 8 },
-  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
+  searchInput: { flex: 1, color: colors.ink, fontSize: 12, paddingVertical: 9 },
+  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center", width: "100%" },
 
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: colors.bg,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
+    paddingHorizontal: spacing.lg,
     gap: 10,
   },
   sectionHeaderText: { fontSize: 12.5, fontWeight: "800", color: colors.primaryDark, letterSpacing: 0.5 },
@@ -664,6 +757,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     marginBottom: spacing.md,
+    marginHorizontal: spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: "hidden",
@@ -725,6 +819,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     marginBottom: spacing.md,
+    marginHorizontal: spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: "hidden",
