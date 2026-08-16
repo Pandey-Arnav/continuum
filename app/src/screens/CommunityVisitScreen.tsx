@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import {
   AudioModule,
   RecordingPresets,
@@ -17,9 +17,12 @@ import {
   antenatalNcdProtocol,
   antenatalNcdSchemaCategories,
   buildDeterministicHandoff,
+  captureVoice,
   compare,
+  handoff,
+  followUp,
   highestFlagLevel,
-  runPipeline,
+  structure,
 } from "@continuum/engine";
 import { sttProvider, llmProvider, providerMode, usingMocks } from "../lib/providers";
 import { supabase } from "../lib/supabase";
@@ -35,6 +38,12 @@ import { SectionCard } from "../components/SectionCard";
 import { FadeSlideIn } from "../components/FadeSlideIn";
 import { VerificationPanel } from "../components/VerificationPanel";
 import { colors, spacing, CATEGORY_ICON, PIPELINE_STAGES } from "../theme";
+
+const SCHEMA_CONTEXT = {
+  protocolId: antenatalNcdProtocol.id,
+  categories: antenatalNcdSchemaCategories,
+  instructions: "Extract antenatal/NCD screening facts only.",
+};
 
 const SAMPLE_NOTES = [
   {
@@ -79,6 +88,10 @@ const SAMPLE_NOTES = [
   },
 ];
 
+type Stage = "capture" | "transcript" | "results";
+
+const SEVERITY_RANK: Record<string, number> = { red: 2, amber: 1, green: 0 };
+
 export function CommunityVisitScreen({ patientId, userId }: { patientId: string; userId: string }) {
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder);
@@ -86,7 +99,15 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   const [selectedSample, setSelectedSample] = useState(0);
   const [captureMode, setCaptureMode] = useState<"sample" | "record">("sample");
   const [languageCode, setLanguageCode] = useState("hi-IN");
-  const [running, setRunning] = useState(false);
+
+  const [stage, setStage] = useState<Stage>("capture");
+  const [transcribing, setTranscribing] = useState(false);
+  const [capturedAt, setCapturedAt] = useState<Date | null>(null);
+  const [rawCapture, setRawCapture] = useState<RawCapture | null>(null);
+  const [editableTranscript, setEditableTranscript] = useState("");
+  const [transcriptWasEdited, setTranscriptWasEdited] = useState(false);
+
+  const [extracting, setExtracting] = useState(false);
   const [stepStatus, setStepStatus] = useState(-1);
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [result, setResult] = useState<{
@@ -106,6 +127,9 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   const runStartedAt = useRef(0);
 
   const useSample = captureMode === "sample";
+  // A real recording with no live STT is a real limitation, not something to hide —
+  // this drives both the transcript-stage messaging and whether we pre-fill fake text.
+  const willNeedManualTranscript = !useSample && usingMocks.stt;
 
   async function startRecording() {
     try {
@@ -146,10 +170,47 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     setStepStatus(finalStatus);
   }
 
-  async function runVisit() {
+  // Stage 1 -> 2: capture only. No structuring/flagging happens yet — the
+  // CHW reviews and can correct exactly what the system heard first.
+  async function runCapture() {
+    setTranscribing(true);
+    try {
+      let capture: RawCapture;
+      if (useSample) {
+        const sample = SAMPLE_NOTES[selectedSample];
+        capture = {
+          sourceType: "chw_voice_visit",
+          text: sample.text,
+          translatedText: sample.translated,
+          language: sample.lang,
+        };
+      } else {
+        capture = await captureVoice({ uri: recordedUri ?? undefined, languageHint: languageCode }, sttProvider);
+      }
+      setRawCapture(capture);
+      setCapturedAt(new Date());
+      const startingText = capture.translatedText ?? capture.text;
+      // If we know this is the honest "couldn't transcribe" placeholder, don't
+      // pre-fill it into an editable box as if it were real content — start blank.
+      setEditableTranscript(willNeedManualTranscript ? "" : startingText);
+      setTranscriptWasEdited(false);
+      setStage("transcript");
+      haptics.light();
+    } catch (e) {
+      haptics.error();
+      Alert.alert("Capture failed", String(e));
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  // Stage 2 -> 3: structure -> compare -> handoff -> follow-up, all against
+  // whatever text is currently in the (possibly hand-edited) transcript box.
+  async function runExtraction() {
+    if (!rawCapture) return;
     runStartedAt.current = Date.now();
     const eventId = Crypto.randomUUID();
-    setRunning(true);
+    setExtracting(true);
     setResult(null);
     setSaveState("idle");
     setConfirmedFacts(new Set());
@@ -159,29 +220,33 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     setCorrectionIds({});
     beginStepAnimation();
     try {
-      const sample = SAMPLE_NOTES[selectedSample];
-      const pipelineResult = await runPipeline({
-        input: {
-          kind: "voice",
-          audio: useSample
-            ? { simulatedText: sample.text, simulatedTranslatedText: sample.translated, simulatedLanguage: sample.lang }
-            : { uri: recordedUri ?? undefined, languageHint: languageCode },
-          sttProvider,
-        },
-        schemaContext: {
-          protocolId: antenatalNcdProtocol.id,
-          categories: antenatalNcdSchemaCategories,
-          instructions: "Extract antenatal/NCD screening facts only.",
-        },
-        protocol: antenatalNcdProtocol,
-        recipientRole: "supervising_health_worker",
-        llmProvider,
-      });
+      const text = editableTranscript.trim();
+      const structuredEntries = await structure(text, SCHEMA_CONTEXT, llmProvider);
+      const flaggedRaw = compare(structuredEntries, antenatalNcdProtocol);
+
+      // Lead with what needs attention: sort red -> amber -> green once, here,
+      // before any index-based state (verification, corrections) is created,
+      // so every downstream index stays consistently paired.
+      const order = flaggedRaw.map((_, i) => i).sort((a, b) => SEVERITY_RANK[flaggedRaw[b].flagLevel] - SEVERITY_RANK[flaggedRaw[a].flagLevel]);
+      const sortedStructured = order.map((i) => structuredEntries[i]);
+      const sortedFlagged = order.map((i) => flaggedRaw[i]);
+
+      const effectiveCapture: RawCapture = { ...rawCapture, translatedText: text };
+      const handoffResult =
+        sortedFlagged.length > 0
+          ? await handoff(sortedFlagged, "supervising_health_worker", llmProvider)
+          : { recipientRole: "supervising_health_worker" as const, summary: "", highestFlagLevel: "green" as const };
+      const followUpQuestions =
+        sortedFlagged.length > 0
+          ? await followUp(sortedStructured, sortedFlagged, SCHEMA_CONTEXT, effectiveCapture.language ?? languageCode, llmProvider)
+          : [];
+
+      const pipelineResult = { rawCapture: effectiveCapture, structuredEntries: sortedStructured, flaggedEntries: sortedFlagged, handoffResult, followUpQuestions };
       setResult(pipelineResult);
-      setOriginalFacts(pipelineResult.flaggedEntries.map((fact) => ({ ...fact })));
-      setConfirmedFacts(new Set());
+      setOriginalFacts(sortedFlagged.map((fact) => ({ ...fact })));
+      setStage("results");
       endStepAnimation(PIPELINE_STAGES.length);
-      const worst = highestFlagLevel(pipelineResult.flaggedEntries);
+      const worst = highestFlagLevel(sortedFlagged);
       if (worst === "red") haptics.warning();
       else haptics.success();
       await recordWorkflowEvent({
@@ -191,16 +256,21 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
         success: true,
         durationMs: Date.now() - runStartedAt.current,
         clientEventId: eventId,
-        metadata: { provider: providerMode, fact_count: pipelineResult.flaggedEntries.length },
+        metadata: { provider: providerMode, fact_count: sortedFlagged.length },
       }).catch(() => undefined);
     } catch (e) {
       endStepAnimation(-1);
       haptics.error();
       await recordWorkflowEvent({ patientId, userId, eventName: "chw_pipeline", success: false, durationMs: Date.now() - runStartedAt.current, metadata: { provider: providerMode } }).catch(() => undefined);
-      Alert.alert("Pipeline failed", String(e));
+      Alert.alert("Extraction failed", String(e));
     } finally {
-      setRunning(false);
+      setExtracting(false);
     }
+  }
+
+  function backToCapture() {
+    setStage("capture");
+    setResult(null);
   }
 
   async function save() {
@@ -256,9 +326,10 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     }
   }
 
-  const canRun = useSample || !!recordedUri;
+  const canCapture = useSample || !!recordedUri;
   const correctionReasonsComplete = Object.values(correctionReasons).every((reason) => reason.trim().length >= 3);
   const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length && correctionReasonsComplete);
+  const concerningCount = result ? result.flaggedEntries.filter((f) => f.flagLevel !== "green").length : 0;
 
   function editFact(index: number, rawValue: string) {
     setResult((current) => {
@@ -295,127 +366,224 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     });
   }
 
+  const captureModeLabel = useSample
+    ? { text: "Sample data — not a live recording", tone: "neutral" as const }
+    : usingMocks.stt
+    ? { text: "Demo mode — no live transcription configured", tone: "amber" as const }
+    : { text: "Live transcription", tone: "green" as const };
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
       <ScreenHeader
         icon="🎙️"
         iconTint={colors.accentSoft}
         title="CHW Visit"
-        subtitle="Capture a voice note → structure against the antenatal/NCD protocol → compare → flag → handoff to the supervising health worker."
+        subtitle="Capture a voice note → review the transcript → structure → compare → flag → handoff to the supervising health worker."
       />
 
-      {usingMocks.stt && (
-        <View style={styles.mockNote}>
-          <Text style={styles.mockNoteIcon}>ℹ️</Text>
-          <Text style={styles.mockNoteText}>
-            Mock provider mode is active. Deploy the secure provider function and enable the proxy to process real
-            recordings.
-          </Text>
-        </View>
-      )}
-
       <View style={styles.flow}>
-        <SectionCard index={1} title="Capture">
-          <SegmentedControl
-            value={captureMode}
-            onChange={(v) => setCaptureMode(v)}
-            options={[
-              { value: "sample", label: "Use sample note" },
-              { value: "record", label: "Record real audio" },
-            ]}
-          />
+        {stage === "capture" && (
+          <>
+            <SectionCard index={1} title="Capture">
+              <SegmentedControl
+                value={captureMode}
+                onChange={(v) => setCaptureMode(v)}
+                options={[
+                  { value: "sample", label: "Use sample note" },
+                  { value: "record", label: "Record real audio" },
+                ]}
+              />
 
-          {useSample ? (
-            <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-              {SAMPLE_NOTES.map((s, i) => (
-                <Pressable
-                  key={i}
-                  style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]}
-                  onPress={() => {
-                    haptics.tap();
-                    setSelectedSample(i);
-                  }}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: selectedSample === i }}
-                  accessibilityLabel={s.label}
-                >
-                  <View style={[styles.radio, selectedSample === i && styles.radioActive]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.sampleLabel}>{s.label}</Text>
-                    <Text style={styles.sampleText}>{s.text}</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            <View style={{ marginTop: spacing.md }}>
-              <Text style={styles.subLabel}>Spoken language ({TOP_LANGUAGES.length})</Text>
-              <ScrollView
-                style={styles.languageScroll}
-                contentContainerStyle={styles.languageGrid}
-                nestedScrollEnabled
-                showsVerticalScrollIndicator={false}
-              >
-                {TOP_LANGUAGES.map((l) => {
-                  const active = languageCode === l.code;
-                  return (
+              {useSample ? (
+                <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+                  {SAMPLE_NOTES.map((s, i) => (
                     <Pressable
-                      key={l.code}
+                      key={i}
+                      style={[styles.sampleCard, selectedSample === i && styles.sampleCardActive]}
                       onPress={() => {
-                        if (!active) haptics.tap();
-                        setLanguageCode(l.code);
+                        haptics.tap();
+                        setSelectedSample(i);
                       }}
-                      style={[styles.langChip, active && styles.langChipActive]}
                       accessibilityRole="radio"
-                      accessibilityState={{ selected: active }}
-                      accessibilityLabel={l.name}
+                      accessibilityState={{ selected: selectedSample === i }}
+                      accessibilityLabel={s.label}
                     >
-                      <Text style={[styles.langChipText, active && styles.langChipTextActive]}>{l.native}</Text>
-                      <Text style={[styles.langChipSubtext, active && styles.langChipTextActive]}> · {l.name}</Text>
+                      <View style={[styles.radio, selectedSample === i && styles.radioActive]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.sampleLabel}>{s.label}</Text>
+                        <Text style={styles.sampleText}>{s.text}</Text>
+                      </View>
                     </Pressable>
-                  );
-                })}
-              </ScrollView>
+                  ))}
+                </View>
+              ) : (
+                <View style={{ marginTop: spacing.md }}>
+                  <Text style={styles.subLabel}>Spoken language ({TOP_LANGUAGES.length})</Text>
+                  <ScrollView
+                    style={styles.languageScroll}
+                    contentContainerStyle={styles.languageGrid}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {TOP_LANGUAGES.map((l) => {
+                      const active = languageCode === l.code;
+                      return (
+                        <Pressable
+                          key={l.code}
+                          onPress={() => {
+                            if (!active) haptics.tap();
+                            setLanguageCode(l.code);
+                          }}
+                          style={[styles.langChip, active && styles.langChipActive]}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: active }}
+                          accessibilityLabel={l.name}
+                        >
+                          <Text style={[styles.langChipText, active && styles.langChipTextActive]}>{l.native}</Text>
+                          <Text style={[styles.langChipSubtext, active && styles.langChipTextActive]}> · {l.name}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
 
-              <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
-                {!recorderState.isRecording ? (
-                  <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
-                ) : (
-                  <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
-                )}
-                {recorderState.isRecording && <Text style={styles.recordingNote}>● Recording…</Text>}
-                {recordedUri && !recorderState.isRecording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
-              </View>
-            </View>
-          )}
-        </SectionCard>
+                  {usingMocks.stt && (
+                    <View style={styles.mockNote}>
+                      <Text style={styles.mockNoteIcon}>ℹ️</Text>
+                      <Text style={styles.mockNoteText}>
+                        Demo mode: no live speech-to-text provider is configured. You'll be able to type what was
+                        said on the next screen instead — recording still works, but its audio won't be
+                        auto-transcribed.
+                      </Text>
+                    </View>
+                  )}
 
-        <Button
-          label={running ? "Running pipeline…" : "▶ Run the pipeline"}
-          onPress={runVisit}
-          loading={running}
-          disabled={!canRun}
-          caption="capture → structure → compare → flag → handoff → follow-up"
-        />
-
-        {(running || result) && <PipelineSteps status={stepStatus} />}
-
-        {result && result.flaggedEntries.length === 0 && (
-          <FadeSlideIn trigger={result}>
-            <SectionCard index={2} title="Nothing extracted" tint={colors.flag.amber.bg}>
-              <Text style={styles.emptyResultText}>
-                No antenatal/NCD facts (blood pressure, temperature, symptoms, weight, etc.) were found in
-                "{result.rawCapture.translatedText ?? result.rawCapture.text}". There's nothing to save from this
-                capture — try a sample note, or mention specific vitals/symptoms when recording.
-              </Text>
+                  <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
+                    {!recorderState.isRecording ? (
+                      <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
+                    ) : (
+                      <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
+                    )}
+                    {recorderState.isRecording && <Text style={styles.recordingNote}>● Recording…</Text>}
+                    {recordedUri && !recorderState.isRecording && <Text style={styles.recordedNote}>✓ Recorded — ready to continue</Text>}
+                  </View>
+                </View>
+              )}
             </SectionCard>
+
+            <Button
+              label={transcribing ? "Capturing…" : "▶ Continue"}
+              onPress={runCapture}
+              loading={transcribing}
+              disabled={!canCapture}
+              caption="Next: review what was captured, before anything is extracted"
+            />
+          </>
+        )}
+
+        {stage === "transcript" && rawCapture && (
+          <FadeSlideIn trigger={rawCapture}>
+            <View style={styles.flow}>
+              <SectionCard index={2} title="What we heard">
+                <View style={styles.metaRow}>
+                  <View style={[styles.modeBadge, styles[`modeBadge_${captureModeLabel.tone}`]]}>
+                    <Text style={[styles.modeBadgeText, styles[`modeBadgeText_${captureModeLabel.tone}`]]}>{captureModeLabel.text}</Text>
+                  </View>
+                  <Text style={styles.metaText}>{languageLabel(rawCapture.language)}</Text>
+                  {capturedAt && <Text style={styles.metaText}>· {capturedAt.toLocaleTimeString()}</Text>}
+                </View>
+
+                {rawCapture.text && rawCapture.text !== rawCapture.translatedText && !willNeedManualTranscript && (
+                  <View style={styles.originalBlock}>
+                    <Text style={styles.originalLabel}>Original (as spoken)</Text>
+                    <Text style={styles.originalText}>{rawCapture.text}</Text>
+                  </View>
+                )}
+
+                <Text style={styles.transcriptLabel}>
+                  {willNeedManualTranscript ? "Type what was said" : "Translation (editable)"}
+                </Text>
+                <TextInput
+                  value={editableTranscript}
+                  onChangeText={(v) => {
+                    setEditableTranscript(v);
+                    setTranscriptWasEdited(true);
+                  }}
+                  multiline
+                  style={styles.transcriptInput}
+                  placeholder={
+                    willNeedManualTranscript
+                      ? "e.g. \"BP was 148 over 96, she reported a severe headache and blurred vision.\""
+                      : "Nothing transcribed"
+                  }
+                  placeholderTextColor={colors.inkFaint}
+                  accessibilityLabel="Transcript, editable before extraction"
+                />
+                {transcriptWasEdited && <Text style={styles.editedNote}>✎ Edited from what was captured</Text>}
+
+                <Text style={styles.protocolHint}>
+                  Only facts relevant to the antenatal/NCD protocol will be extracted — blood pressure, temperature,
+                  blood sugar, weight, bleeding, fetal movement, swelling, headache. Unrelated details are left out,
+                  not guessed at.
+                </Text>
+
+                {useSample && (
+                  <Pressable onPress={() => setEditableTranscript(SAMPLE_NOTES[selectedSample].translated)} style={styles.resetLink}>
+                    <Text style={styles.resetLinkText}>↺ Reset to sample text</Text>
+                  </Pressable>
+                )}
+              </SectionCard>
+
+              <View style={styles.stageButtonRow}>
+                <Button label="◀ Back" onPress={backToCapture} variant="secondary" fullWidth={false} />
+                <View style={{ flex: 1 }}>
+                  <Button
+                    label={extracting ? "Extracting…" : "▶ Continue → extract observations"}
+                    onPress={runExtraction}
+                    loading={extracting}
+                    disabled={editableTranscript.trim().length === 0}
+                  />
+                </View>
+              </View>
+
+              {extracting && <PipelineSteps status={stepStatus} />}
+            </View>
           </FadeSlideIn>
         )}
 
-        {result && result.flaggedEntries.length > 0 && (
+        {stage === "results" && result && result.flaggedEntries.length === 0 && (
           <FadeSlideIn trigger={result}>
             <View style={styles.flow}>
-              <SectionCard index={2} title="Structured & flagged">
+              <SectionCard index={3} title="Nothing extracted" tint={colors.flag.amber.bg}>
+                <Text style={styles.emptyResultText}>
+                  No antenatal/NCD facts (blood pressure, temperature, symptoms, weight, etc.) were found in
+                  "{result.rawCapture.translatedText ?? result.rawCapture.text}". There's nothing to save from this
+                  capture — go back and try a sample note, or describe specific vitals/symptoms.
+                </Text>
+              </SectionCard>
+              <Button label="◀ Back to transcript" onPress={() => setStage("transcript")} variant="secondary" fullWidth={false} />
+            </View>
+          </FadeSlideIn>
+        )}
+
+        {stage === "results" && result && result.flaggedEntries.length > 0 && (
+          <FadeSlideIn trigger={result}>
+            <View style={styles.flow}>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryText}>
+                  <Text style={styles.summaryStrong}>{result.structuredEntries.length}</Text> observation{result.structuredEntries.length === 1 ? "" : "s"} extracted
+                  {concerningCount > 0 && (
+                    <>
+                      {" · "}
+                      <Text style={[styles.summaryStrong, { color: colors.flag[highestFlagLevel(result.flaggedEntries)].fg }]}>
+                        {concerningCount}
+                      </Text>{" "}
+                      need{concerningCount === 1 ? "s" : ""} review
+                    </>
+                  )}
+                </Text>
+              </View>
+
+              <SectionCard index={3} title="Structured & flagged — most urgent first">
                 {result.flaggedEntries.map((f, i) => (
                   <View key={i} style={[styles.factRow, i > 0 && styles.factRowBorder]}>
                     <FlagBadge level={f.flagLevel} compact />
@@ -424,18 +592,23 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
                         {CATEGORY_ICON[f.category] ?? "📌"} {f.category.replace(/_/g, " ")}: {String(f.value)} {f.unit ?? ""}
                       </Text>
                       <Text style={styles.factReason}>{f.flagReason}</Text>
+                      {!!f.note && (
+                        <Text style={styles.factEvidence} numberOfLines={2}>
+                          “{f.note}” {f.evidenceVerified === false && "· source needs review"}
+                        </Text>
+                      )}
                     </View>
                   </View>
                 ))}
               </SectionCard>
 
-              <SectionCard index={3} title="Handoff · to supervising health worker" tint={colors.accentSoft}>
+              <SectionCard index={4} title="Handoff · to supervising health worker" tint={colors.accentSoft}>
                 <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
               </SectionCard>
 
               {result.followUpQuestions.length > 0 && (
                 <SectionCard
-                  index={4}
+                  index={5}
                   title={
                     !usingMocks.llm || /^(hi|mr)(-|$)/i.test(result.rawCapture.language ?? "")
                       ? `Follow-up questions · ask in ${languageLabel(result.rawCapture.language)}`
@@ -476,6 +649,12 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
                 disabled={saveState !== "idle" || !verificationComplete}
                 variant={saveState !== "idle" ? "secondary" : "primary"}
               />
+
+              {saveState === "idle" && (
+                <Pressable onPress={() => setStage("transcript")} style={styles.resetLink}>
+                  <Text style={styles.resetLinkText}>◀ Back to transcript</Text>
+                </Pressable>
+              )}
             </View>
           </FadeSlideIn>
         )}
@@ -485,7 +664,7 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
 }
 
 function languageLabel(code: string | undefined): string {
-  if (!code) return "the spoken language";
+  if (!code || code === "unknown") return "the spoken language";
   const lower = code.toLowerCase();
   const match = TOP_LANGUAGES.find((l) => l.code.toLowerCase() === lower || l.code.toLowerCase().startsWith(`${lower}-`));
   return match?.name ?? code;
@@ -522,7 +701,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.flag.amber.bg,
     borderRadius: 10,
     padding: spacing.sm,
-    marginBottom: spacing.lg,
+    marginTop: spacing.md,
   },
   mockNoteIcon: { fontSize: 13 },
   mockNoteText: { flex: 1, fontSize: 12, color: colors.flag.amber.fg, fontWeight: "600", lineHeight: 16 },
@@ -573,10 +752,51 @@ const styles = StyleSheet.create({
   langChipText: { fontSize: 12.5, fontWeight: "700", color: colors.ink },
   langChipSubtext: { fontSize: 11, fontWeight: "500", color: colors.inkMuted },
   langChipTextActive: { color: colors.onAccent },
+
+  metaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: spacing.md },
+  modeBadge: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
+  modeBadge_neutral: { backgroundColor: colors.surfaceMuted, borderColor: colors.border },
+  modeBadge_amber: { backgroundColor: colors.flag.amber.bg, borderColor: colors.flag.amber.border },
+  modeBadge_green: { backgroundColor: colors.flag.green.bg, borderColor: colors.flag.green.border },
+  modeBadgeText: { fontSize: 10.5, fontWeight: "800" },
+  modeBadgeText_neutral: { color: colors.inkMuted },
+  modeBadgeText_amber: { color: colors.flag.amber.fg },
+  modeBadgeText_green: { color: colors.flag.green.fg },
+  metaText: { fontSize: 11.5, color: colors.inkFaint, fontWeight: "600" },
+
+  originalBlock: { backgroundColor: colors.surfaceMuted, borderRadius: 10, padding: spacing.sm, marginBottom: spacing.md },
+  originalLabel: { fontSize: 10.5, fontWeight: "800", color: colors.inkFaint, letterSpacing: 0.4, marginBottom: 4 },
+  originalText: { fontSize: 13, color: colors.inkMuted, lineHeight: 18 },
+
+  transcriptLabel: { fontSize: 11.5, fontWeight: "700", color: colors.inkMuted, marginBottom: 6 },
+  transcriptInput: {
+    minHeight: 100,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 10,
+    padding: spacing.sm,
+    fontSize: 14,
+    color: colors.ink,
+    lineHeight: 20,
+    textAlignVertical: "top",
+    backgroundColor: colors.surface,
+  },
+  editedNote: { fontSize: 11, color: colors.accent, fontWeight: "700", marginTop: 6 },
+  protocolHint: { fontSize: 11.5, color: colors.inkFaint, lineHeight: 16, marginTop: spacing.sm },
+  resetLink: { marginTop: spacing.sm, alignSelf: "flex-start" },
+  resetLinkText: { fontSize: 12.5, color: colors.primary, fontWeight: "700" },
+
+  stageButtonRow: { flexDirection: "row", gap: spacing.sm, alignItems: "stretch" },
+
+  summaryRow: { paddingHorizontal: 2 },
+  summaryText: { fontSize: 14, color: colors.inkMuted },
+  summaryStrong: { fontWeight: "800", color: colors.ink },
+
   factRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: spacing.sm },
   factRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   factCategory: { fontSize: 13, fontWeight: "700", color: colors.ink },
   factReason: { fontSize: 12, color: colors.inkMuted, marginTop: 2 },
+  factEvidence: { fontSize: 11.5, color: colors.inkFaint, marginTop: 3, fontStyle: "italic" },
   handoffText: { fontSize: 13.5, color: colors.ink, lineHeight: 20 },
   followUpRow: { paddingVertical: spacing.sm },
   followUpQuestion: { fontSize: 13.5, fontWeight: "700", color: colors.ink, lineHeight: 19 },
