@@ -6,22 +6,45 @@ import {
   MockLLMProvider,
   MockOCRProvider,
   MockSTTProvider,
-  RecipientRole,
   antenatalNcdProtocol,
   antenatalNcdSchemaCategories,
   dischargeRedFlagsProtocol,
   dischargeSchemaCategories,
   runPipeline,
 } from "@continuum/engine";
+import * as Crypto from "expo-crypto";
 import { supabase } from "./supabase";
 import { insertEntryFromPipeline } from "./entries";
 
 const DEMO_PATIENT_NAME = "Sunita Devi (demo)";
-const ALL_ROLES: RecipientRole[] = ["supervising_health_worker", "patient", "doctor", "family_member"];
 
 export interface DemoSession {
   userId: string;
   patientId: string;
+}
+
+export type WorkspaceAccessState =
+  | { status: "signed_out" }
+  | { status: "needs_access"; userId: string }
+  | { status: "ready"; session: DemoSession };
+
+export async function inspectWorkspaceSession(): Promise<WorkspaceAccessState> {
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  if (!session) return { status: "signed_out" };
+
+  const { data: relationships, error: relationshipError } = await supabase
+    .from("patient_relationships")
+    .select("patient_id")
+    .eq("user_id", session.user.id)
+    .limit(1);
+  if (relationshipError) throw relationshipError;
+  if (!relationships?.length) return { status: "needs_access", userId: session.user.id };
+
+  return {
+    status: "ready",
+    session: { userId: session.user.id, patientId: relationships[0].patient_id as string },
+  };
 }
 
 export async function ensureDemoSession(): Promise<DemoSession> {
@@ -43,21 +66,18 @@ export async function ensureDemoSession(): Promise<DemoSession> {
     return { userId, patientId: rels[0].patient_id as string };
   }
 
-  const { data: patient, error: patientErr } = await supabase
-    .from("patients")
-    .insert({ display_name: DEMO_PATIENT_NAME, created_by: userId })
-    .select()
-    .single();
-  if (patientErr) throw patientErr;
+  const { data: patientId, error: workspaceError } = await supabase.rpc("create_care_workspace", {
+    patient_display_name: DEMO_PATIENT_NAME,
+  });
+  if (workspaceError) {
+    throw new Error(
+      `Demo workspace creation failed (${workspaceError.message}). Apply migration 0004, or use the existing demo database relationship.`
+    );
+  }
 
-  const { error: relInsertErr } = await supabase
-    .from("patient_relationships")
-    .insert(ALL_ROLES.map((role) => ({ patient_id: patient.id, user_id: userId, role })));
-  if (relInsertErr) throw relInsertErr;
+  await seedDemoEntries(String(patientId), userId);
 
-  await seedDemoEntries(patient.id, userId);
-
-  return { userId, patientId: patient.id as string };
+  return { userId, patientId: String(patientId) };
 }
 
 async function signInAnonymously() {
@@ -121,6 +141,8 @@ async function seedDemoEntries(patientId: string, userId: string) {
       flaggedEntries: result.flaggedEntries,
       handoffResult: result.handoffResult,
       protocolId: antenatalNcdProtocol.id,
+      clientEventId: Crypto.randomUUID(),
+      review: { status: "demo_seeded", extractionProvider: "mock" },
     });
   }
 
@@ -145,6 +167,8 @@ async function seedDemoEntries(patientId: string, userId: string) {
       flaggedEntries: result.flaggedEntries,
       handoffResult: result.handoffResult,
       protocolId: dischargeRedFlagsProtocol.id,
+      clientEventId: Crypto.randomUUID(),
+      review: { status: "demo_seeded", extractionProvider: "mock" },
     });
   }
 }

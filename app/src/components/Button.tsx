@@ -51,8 +51,8 @@ export function Button({
 }
 
 const VARIANTS: Record<Variant, { bg: string; fg: string; border?: string }> = {
-  primary: { bg: colors.primary, fg: colors.onPrimary },
-  accent: { bg: colors.accent, fg: colors.onAccent },
+  primary: { bg: colors.accent, fg: colors.onAccent },
+  accent: { bg: colors.primary, fg: colors.onPrimary },
   secondary: { bg: colors.surface, fg: colors.ink, border: colors.borderStrong },
   danger: { bg: colors.danger, fg: "#FFFFFF" },
   ghost: { bg: "transparent", fg: colors.primary },
@@ -60,9 +60,9 @@ const VARIANTS: Record<Variant, { bg: string; fg: string; border?: string }> = {
 
 const styles = StyleSheet.create({
   base: {
-    paddingVertical: 14,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.md,
+    paddingVertical: 13,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radius.sm,
     alignItems: "center",
     justifyContent: "center",
     minHeight: 50,
@@ -70,7 +70,7 @@ const styles = StyleSheet.create({
   inline: { alignSelf: "flex-start", paddingHorizontal: spacing.lg },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   icon: { fontSize: 15 },
-  label: { fontSize: 14.5, fontWeight: "700" },
+  label: { fontSize: 14.5, fontWeight: "800", letterSpacing: 0.1 },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
 });

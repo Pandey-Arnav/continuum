@@ -1,6 +1,12 @@
 import { useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Audio } from "expo-av";
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
 import * as Crypto from "expo-crypto";
 import {
   FlaggedEntry,
@@ -12,7 +18,7 @@ import {
   highestFlagLevel,
   runPipeline,
 } from "@continuum/engine";
-import { sttProvider, llmProvider, usingMocks } from "../lib/providers";
+import { sttProvider, llmProvider, providerMode, usingMocks } from "../lib/providers";
 import { supabase } from "../lib/supabase";
 import { insertEntryFromPipeline } from "../lib/entries";
 import { haptics } from "../lib/haptics";
@@ -22,7 +28,8 @@ import { Card } from "../components/Card";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { PipelineSteps } from "../components/PipelineSteps";
-import { colors, spacing, typography, PIPELINE_STAGES } from "../theme";
+import { VerificationPanel } from "../components/VerificationPanel";
+import { colors, radius, spacing, typography, PIPELINE_STAGES } from "../theme";
 
 const SAMPLE_NOTES = [
   {
@@ -39,7 +46,8 @@ const SAMPLE_NOTES = [
 ];
 
 export function CommunityVisitScreen({ patientId, userId }: { patientId: string; userId: string }) {
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const [selectedSample, setSelectedSample] = useState(0);
   const [captureMode, setCaptureMode] = useState<"sample" | "record">("sample");
@@ -54,19 +62,21 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [confirmedFacts, setConfirmedFacts] = useState<Set<number>>(new Set());
+  const [clientEventId, setClientEventId] = useState<string | null>(null);
 
   const useSample = captureMode === "sample";
 
   async function startRecording() {
     try {
-      const perm = await Audio.requestPermissionsAsync();
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
         Alert.alert("Microphone permission needed", "Grant microphone access to record a voice note, or use a sample note below.");
         return;
       }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording: rec } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      setRecording(rec);
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
       setCaptureMode("record");
       setResult(null);
       setSaved(false);
@@ -78,11 +88,9 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   }
 
   async function stopRecording() {
-    if (!recording) return;
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-    setRecordedUri(uri);
-    setRecording(null);
+    if (!recorderState.isRecording) return;
+    await audioRecorder.stop();
+    setRecordedUri(audioRecorder.uri);
     haptics.light();
   }
 
@@ -102,6 +110,8 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     setRunning(true);
     setResult(null);
     setSaved(false);
+    setConfirmedFacts(new Set());
+    setClientEventId(null);
     beginStepAnimation();
     try {
       const sample = SAMPLE_NOTES[selectedSample];
@@ -123,6 +133,8 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
         llmProvider,
       });
       setResult(pipelineResult);
+      setConfirmedFacts(new Set());
+      setClientEventId(Crypto.randomUUID());
       endStepAnimation(PIPELINE_STAGES.length);
       const worst = highestFlagLevel(pipelineResult.flaggedEntries);
       if (worst === "red") haptics.warning();
@@ -153,6 +165,13 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
         handoffResult: result.handoffResult,
         protocolId: antenatalNcdProtocol.id,
         mediaRef,
+        clientEventId,
+        review: {
+          status: "human_verified",
+          reviewedBy: userId,
+          reviewedAt: new Date().toISOString(),
+          extractionProvider: providerMode,
+        },
       });
       setSaved(true);
       haptics.success();
@@ -165,6 +184,16 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   }
 
   const canRun = useSample || !!recordedUri;
+  const verificationComplete = Boolean(result && result.flaggedEntries.length > 0 && confirmedFacts.size === result.flaggedEntries.length);
+
+  function toggleConfirmedFact(index: number) {
+    setConfirmedFacts((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
@@ -177,7 +206,7 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
 
       {usingMocks.stt && (
         <View style={styles.mockNote}>
-          <Text style={styles.mockNoteText}>Using mock speech-to-text — no SARVAM_API_KEY set. Content comes from the sample note text.</Text>
+          <Text style={styles.mockNoteText}>Mock provider mode is active. Deploy the secure provider function and enable the proxy to process real recordings.</Text>
         </View>
       )}
 
@@ -216,13 +245,13 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
           </View>
         ) : (
           <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
-            {!recording ? (
+            {!recorderState.isRecording ? (
               <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
             ) : (
               <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
             )}
-            {recording && <Text style={styles.recordingNote}>● Recording…</Text>}
-            {recordedUri && !recording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
+            {recorderState.isRecording && <Text style={styles.recordingNote}>● Recording…</Text>}
+            {recordedUri && !recorderState.isRecording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
           </View>
         )}
       </Card>
@@ -262,11 +291,14 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
             <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
           </Card>
 
+          <Text style={styles.sectionLabel}>4 · Verify evidence</Text>
+          <VerificationPanel facts={result.flaggedEntries} confirmed={confirmedFacts} onToggle={toggleConfirmedFact} />
+
           <Button
-            label={saved ? "✓ Saved to timeline" : "Save to timeline"}
+            label={saved ? "✓ Saved to timeline" : verificationComplete ? "Save verified entry" : "Verify every fact to save"}
             onPress={save}
             loading={saving}
-            disabled={saved}
+            disabled={saved || !verificationComplete}
             variant={saved ? "secondary" : "primary"}
           />
         </>
@@ -289,10 +321,25 @@ async function tryUploadAudio(patientId: string, uri: string): Promise<string | 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
-  mockNote: { backgroundColor: "#FDF3E0", borderRadius: 10, padding: spacing.sm, marginBottom: spacing.lg },
-  mockNoteText: { fontSize: 12, color: "#9A5B06", fontWeight: "600" },
-  sectionLabel: { ...typography.label, marginBottom: spacing.sm, marginTop: spacing.xl },
+  container: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 1180,
+    alignSelf: "center",
+    backgroundColor: colors.bg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+  },
+  mockNote: {
+    backgroundColor: colors.flag.amber.bg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.flag.amber.border,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  mockNoteText: { fontSize: 12, color: colors.flag.amber.fg, fontWeight: "700" },
+  sectionLabel: { ...typography.label, color: colors.primaryDark, marginBottom: spacing.sm, marginTop: spacing.xl },
   section: { marginBottom: 0 },
   sampleCard: {
     flexDirection: "row",
@@ -300,11 +347,11 @@ const styles = StyleSheet.create({
     gap: 10,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
-    padding: spacing.sm,
-    backgroundColor: colors.bg,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
   },
-  sampleCardActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  sampleCardActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   radio: {
     width: 16,
     height: 16,
@@ -313,7 +360,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderStrong,
     marginTop: 2,
   },
-  radioActive: { borderColor: colors.accent, backgroundColor: colors.accent },
+  radioActive: { borderColor: colors.primary, backgroundColor: colors.primary },
   sampleLabel: { fontSize: 12.5, fontWeight: "700", color: colors.ink },
   sampleText: { fontSize: 12, color: colors.inkMuted, marginTop: 3, lineHeight: 16 },
   recordingNote: { marginTop: spacing.sm, color: colors.danger, fontSize: 12, fontWeight: "700" },

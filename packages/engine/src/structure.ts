@@ -24,7 +24,7 @@ export function buildStructurePrompt(rawText: string, schemaContext: SchemaConte
     rawText,
     "",
     "Respond with ONLY a JSON array of objects shaped like:",
-    '[{ "category": "<one of the allowed categories>", "value": <string or number>, "unit": "<optional>", "timestamp": "<ISO 8601, default to now if not stated>", "note": "<short verbatim snippet this came from>" }]',
+    '[{ "category": "<one of the allowed categories>", "value": <string or number>, "unit": "<optional>", "timestamp": "<ISO 8601, default to now if not stated>", "note": "<exact short verbatim snippet copied from Raw text>" }]',
     "",
     `INPUT_JSON: ${inputJson}`,
   ].join("\n");
@@ -53,14 +53,32 @@ export async function structure(
   const now = new Date().toISOString();
 
   return (parsed as Record<string, unknown>[])
-    .filter((item) => typeof item.category === "string" && allowedCategories.has(item.category))
-    .map((item) => ({
-      category: String(item.category),
-      value: (item.value as string | number) ?? "",
-      unit: item.unit ? String(item.unit) : undefined,
-      timestamp: item.timestamp ? String(item.timestamp) : now,
-      note: item.note ? String(item.note) : undefined,
-    }));
+    .filter((item) => {
+      if (!item || typeof item !== "object") return false;
+      if (typeof item.category !== "string" || !allowedCategories.has(item.category)) return false;
+      if (typeof item.value !== "string" && typeof item.value !== "number") return false;
+      if (typeof item.value === "number" && !Number.isFinite(item.value)) return false;
+      return String(item.value).trim().length > 0;
+    })
+    .map((item) => {
+      const note = item.note ? String(item.note).trim() : undefined;
+      const evidenceVerified = Boolean(note && normalizeEvidence(rawText).includes(normalizeEvidence(note)));
+      const requestedTimestamp = item.timestamp ? String(item.timestamp) : "";
+      const timestamp = requestedTimestamp && !Number.isNaN(Date.parse(requestedTimestamp)) ? requestedTimestamp : now;
+      return {
+        category: String(item.category),
+        value: item.value as string | number,
+        unit: item.unit ? String(item.unit) : undefined,
+        timestamp,
+        note,
+        evidenceVerified,
+        extractionConfidence: evidenceVerified ? "high" as const : "review" as const,
+      };
+    });
+}
+
+function normalizeEvidence(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").replace(/[“”"']/g, "").trim();
 }
 
 /** LLMs (and our mock) sometimes wrap JSON in prose or code fences; pull just the array out. */
