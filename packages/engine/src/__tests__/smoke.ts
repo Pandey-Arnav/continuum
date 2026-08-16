@@ -34,6 +34,7 @@ async function scenarioA() {
   console.log("structured entries:", JSON.stringify(result.structuredEntries, null, 2));
   console.log("flagged entries:", JSON.stringify(result.flaggedEntries, null, 2));
   console.log("handoff:", result.handoffResult);
+  console.log("follow-up questions:", JSON.stringify(result.followUpQuestions, null, 2));
 
   assert(result.structuredEntries.length > 0, "scenario A extracts at least one structured entry");
   assert(
@@ -41,6 +42,7 @@ async function scenarioA() {
     "scenario A produces at least one red flag (severe headache / reduced fetal movement / high BP)"
   );
   assert(result.handoffResult.recipientRole === "supervising_health_worker", "scenario A handoff addressed to health worker");
+  assert(result.followUpQuestions.length > 0, "scenario A produces at least one follow-up question");
 }
 
 async function scenarioB() {
@@ -72,6 +74,7 @@ async function scenarioB() {
     "scenario B produces at least one red flag (red-flag symptom)"
   );
   assert(result.handoffResult.recipientRole === "patient", "scenario B handoff addressed to patient");
+  assert(result.followUpQuestions.length === 0, "scenario B (photo capture) produces no follow-up questions");
 }
 
 async function main() {

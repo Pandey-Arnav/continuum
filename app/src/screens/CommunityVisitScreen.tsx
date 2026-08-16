@@ -4,6 +4,7 @@ import { Audio } from "expo-av";
 import * as Crypto from "expo-crypto";
 import {
   FlaggedEntry,
+  FollowUpQuestion,
   HandoffResult,
   RawCapture,
   StructuredEntry,
@@ -16,6 +17,7 @@ import { sttProvider, llmProvider, usingMocks } from "../lib/providers";
 import { supabase } from "../lib/supabase";
 import { insertEntryFromPipeline } from "../lib/entries";
 import { haptics } from "../lib/haptics";
+import { TOP_LANGUAGES } from "../lib/languages";
 import { FlagBadge } from "../components/FlagBadge";
 import { Button } from "../components/Button";
 import { ScreenHeader } from "../components/ScreenHeader";
@@ -44,6 +46,7 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const [selectedSample, setSelectedSample] = useState(0);
   const [captureMode, setCaptureMode] = useState<"sample" | "record">("sample");
+  const [languageCode, setLanguageCode] = useState("hi-IN");
   const [running, setRunning] = useState(false);
   const [stepStatus, setStepStatus] = useState(-1);
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -52,6 +55,7 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
     structuredEntries: StructuredEntry[];
     flaggedEntries: FlaggedEntry[];
     handoffResult: HandoffResult;
+    followUpQuestions: FollowUpQuestion[];
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -111,7 +115,7 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
           kind: "voice",
           audio: useSample
             ? { simulatedText: sample.text, simulatedTranslatedText: sample.translated, simulatedLanguage: "hi" }
-            : { uri: recordedUri ?? undefined, languageHint: "hi-IN" },
+            : { uri: recordedUri ?? undefined, languageHint: languageCode },
           sttProvider,
         },
         schemaContext: {
@@ -217,14 +221,44 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
               ))}
             </View>
           ) : (
-            <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
-              {!recording ? (
-                <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
-              ) : (
-                <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
-              )}
-              {recording && <Text style={styles.recordingNote}>● Recording…</Text>}
-              {recordedUri && !recording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
+            <View style={{ marginTop: spacing.md }}>
+              <Text style={styles.subLabel}>Spoken language ({TOP_LANGUAGES.length})</Text>
+              <ScrollView
+                style={styles.languageScroll}
+                contentContainerStyle={styles.languageGrid}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={false}
+              >
+                {TOP_LANGUAGES.map((l) => {
+                  const active = languageCode === l.code;
+                  return (
+                    <Pressable
+                      key={l.code}
+                      onPress={() => {
+                        if (!active) haptics.tap();
+                        setLanguageCode(l.code);
+                      }}
+                      style={[styles.langChip, active && styles.langChipActive]}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={l.name}
+                    >
+                      <Text style={[styles.langChipText, active && styles.langChipTextActive]}>{l.native}</Text>
+                      <Text style={[styles.langChipSubtext, active && styles.langChipTextActive]}> · {l.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <View style={{ marginTop: spacing.md, alignItems: "flex-start" }}>
+                {!recording ? (
+                  <Button label="● Start recording" onPress={startRecording} variant="danger" fullWidth={false} />
+                ) : (
+                  <Button label="■ Stop recording" onPress={stopRecording} variant="secondary" fullWidth={false} />
+                )}
+                {recording && <Text style={styles.recordingNote}>● Recording…</Text>}
+                {recordedUri && !recording && <Text style={styles.recordedNote}>✓ Recorded — ready to run</Text>}
+              </View>
             </View>
           )}
         </SectionCard>
@@ -234,12 +268,24 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
           onPress={runVisit}
           loading={running}
           disabled={!canRun}
-          caption="capture → structure → compare → flag → handoff"
+          caption="capture → structure → compare → flag → handoff → follow-up"
         />
 
         {(running || result) && <PipelineSteps status={stepStatus} />}
 
-        {result && (
+        {result && result.flaggedEntries.length === 0 && (
+          <FadeSlideIn trigger={result}>
+            <SectionCard index={2} title="Nothing extracted" tint={colors.flag.amber.bg}>
+              <Text style={styles.emptyResultText}>
+                No antenatal/NCD facts (blood pressure, temperature, symptoms, weight, etc.) were found in
+                "{result.rawCapture.translatedText ?? result.rawCapture.text}". There's nothing to save from this
+                capture — try a sample note, or mention specific vitals/symptoms when recording.
+              </Text>
+            </SectionCard>
+          </FadeSlideIn>
+        )}
+
+        {result && result.flaggedEntries.length > 0 && (
           <FadeSlideIn trigger={result}>
             <View style={styles.flow}>
               <SectionCard index={2} title="Structured & flagged">
@@ -260,6 +306,21 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
                 <Text style={styles.handoffText}>{result.handoffResult.summary}</Text>
               </SectionCard>
 
+              {result.followUpQuestions.length > 0 && (
+                <SectionCard
+                  index={4}
+                  title={`Follow-up questions · ask in ${languageLabel(result.rawCapture.language)}`}
+                  tint={colors.flag.amber.bg}
+                >
+                  {result.followUpQuestions.map((q, i) => (
+                    <View key={i} style={[styles.followUpRow, i > 0 && styles.factRowBorder]}>
+                      <Text style={styles.followUpQuestion}>{q.question}</Text>
+                      {!!q.englishGloss && <Text style={styles.followUpGloss}>{q.englishGloss}</Text>}
+                    </View>
+                  ))}
+                </SectionCard>
+              )}
+
               <Button
                 label={saved ? "✓ Saved to timeline" : "Save to timeline"}
                 onPress={save}
@@ -273,6 +334,13 @@ export function CommunityVisitScreen({ patientId, userId }: { patientId: string;
       </View>
     </ScrollView>
   );
+}
+
+function languageLabel(code: string | undefined): string {
+  if (!code) return "the spoken language";
+  const lower = code.toLowerCase();
+  const match = TOP_LANGUAGES.find((l) => l.code.toLowerCase() === lower || l.code.toLowerCase().startsWith(`${lower}-`));
+  return match?.name ?? code;
 }
 
 async function tryUploadAudio(patientId: string, uri: string): Promise<string | null> {
@@ -326,9 +394,36 @@ const styles = StyleSheet.create({
   sampleText: { fontSize: 12, color: colors.inkMuted, marginTop: 3, lineHeight: 16 },
   recordingNote: { marginTop: spacing.sm, color: colors.danger, fontSize: 12, fontWeight: "700" },
   recordedNote: { marginTop: spacing.sm, color: colors.flag.green.fg, fontSize: 12, fontWeight: "700" },
+  subLabel: { fontSize: 11.5, fontWeight: "700", color: colors.inkMuted, marginBottom: spacing.sm },
+  languageScroll: {
+    maxHeight: 160,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    backgroundColor: colors.bg,
+  },
+  languageGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, padding: spacing.sm },
+  langChip: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  langChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  langChipText: { fontSize: 12.5, fontWeight: "700", color: colors.ink },
+  langChipSubtext: { fontSize: 11, fontWeight: "500", color: colors.inkMuted },
+  langChipTextActive: { color: colors.onAccent },
   factRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: spacing.sm },
   factRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   factCategory: { fontSize: 13, fontWeight: "700", color: colors.ink },
   factReason: { fontSize: 12, color: colors.inkMuted, marginTop: 2 },
   handoffText: { fontSize: 13.5, color: colors.ink, lineHeight: 20 },
+  followUpRow: { paddingVertical: spacing.sm },
+  followUpQuestion: { fontSize: 13.5, fontWeight: "700", color: colors.ink, lineHeight: 19 },
+  followUpGloss: { fontSize: 12, color: colors.inkMuted, marginTop: 2, fontStyle: "italic" },
+  emptyResultText: { fontSize: 13, color: colors.flag.amber.fg, lineHeight: 19 },
 });

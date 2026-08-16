@@ -225,7 +225,19 @@ export function DischargeScreen({ patientId, userId }: { patientId: string; user
 
         {(running || result) && <PipelineSteps status={stepStatus} />}
 
-        {result && (
+        {result && result.flaggedEntries.length === 0 && (
+          <FadeSlideIn trigger={result}>
+            <SectionCard index={2} title="Nothing extracted" tint={colors.flag.amber.bg}>
+              <Text style={styles.emptyResultText}>
+                No discharge facts (diagnosis, medication changes, follow-up dates, red-flag symptoms) were found
+                in the captured text. There's nothing to save from this capture — try a sample sheet, or photograph
+                a document that mentions those specifically.
+              </Text>
+            </SectionCard>
+          </FadeSlideIn>
+        )}
+
+        {result && result.flaggedEntries.length > 0 && (
           <FadeSlideIn trigger={result}>
             <View style={styles.flow}>
               <SectionCard index={2} title="Structured & flagged">
@@ -321,4 +333,5 @@ const styles = StyleSheet.create({
   factCategory: { fontSize: 13, fontWeight: "700", color: colors.ink },
   factReason: { fontSize: 12, color: colors.inkMuted, marginTop: 2 },
   handoffText: { fontSize: 13.5, color: colors.ink, lineHeight: 20 },
+  emptyResultText: { fontSize: 13, color: colors.flag.amber.fg, lineHeight: 19 },
 });

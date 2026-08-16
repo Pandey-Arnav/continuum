@@ -201,6 +201,43 @@ function heuristicHandoff(entries: { category: string; value: unknown; flagLevel
   return parts.join(" ");
 }
 
+// ---- Heuristic follow-up questions used by MockLLMProvider for the "followUp" task ----
+// Canned Hinglish/English question bank, same "not a model" caveat as heuristicStructure.
+
+const FOLLOWUP_PHRASES_HI: Record<string, { question: string; englishGloss: string }> = {
+  blood_pressure_systolic: { question: "Kya aapne BP naapa hai?", englishGloss: "Did you measure blood pressure?" },
+  blood_pressure_diastolic: { question: "Kya aapne BP naapa hai?", englishGloss: "Did you measure blood pressure?" },
+  temperature_f: { question: "Kya bukhar hai?", englishGloss: "Is there any fever?" },
+  blood_sugar_random_mgdl: { question: "Kya blood sugar test hua hai?", englishGloss: "Has a blood sugar test been done?" },
+  weight_kg: { question: "Kya weight naapa gaya?", englishGloss: "Was weight recorded?" },
+  vaginal_bleeding: { question: "Kya koi bleeding hui hai?", englishGloss: "Has there been any bleeding?" },
+  reduced_fetal_movement: { question: "Baby ka movement kaisa mehsoos ho raha hai?", englishGloss: "How does the baby's movement feel?" },
+  severe_swelling: { question: "Haath ya chehre par sujan hai kya?", englishGloss: "Is there swelling in the hands or face?" },
+  severe_headache: { question: "Sar dard ya dhundhla dikhna jaisa kuch hai kya?", englishGloss: "Any headache or blurry vision?" },
+};
+
+function heuristicFollowUp(
+  missing: { category: string }[],
+  concerning: { category: string; flagLevel: string; flagReason: string }[]
+): { question: string; englishGloss: string }[] {
+  const out: { question: string; englishGloss: string }[] = [];
+
+  for (const c of concerning.slice(0, 2)) {
+    out.push({
+      question: `${FOLLOWUP_PHRASES_HI[c.category]?.question ?? "Iske baare mein aur bataiye:"} (${c.flagReason})`,
+      englishGloss: `Get more detail — ${c.flagReason}`,
+    });
+  }
+
+  for (const m of missing) {
+    if (out.length >= 4) break;
+    const phrase = FOLLOWUP_PHRASES_HI[m.category];
+    if (phrase) out.push(phrase);
+  }
+
+  return out.slice(0, 4);
+}
+
 export const MockLLMProvider: LLMProvider = {
   name: "mock-llm",
   async complete(prompt: string): Promise<string> {
@@ -219,6 +256,10 @@ export const MockLLMProvider: LLMProvider = {
 
     if (input.task === "handoff") {
       return heuristicHandoff(input.entries, input.recipientRole);
+    }
+
+    if (input.task === "followUp") {
+      return JSON.stringify(heuristicFollowUp(input.missing ?? [], input.concerning ?? []));
     }
 
     return "[]";

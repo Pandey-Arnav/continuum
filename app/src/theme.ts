@@ -101,4 +101,5 @@ export const PIPELINE_STAGES = [
   { key: "compare", label: "Compare", icon: "③" },
   { key: "flag", label: "Flag", icon: "④" },
   { key: "handoff", label: "Handoff", icon: "⑤" },
+  { key: "followup", label: "Follow-up", icon: "⑥" },
 ] as const;

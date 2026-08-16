@@ -7,14 +7,17 @@ import { capturePhoto, captureVoice } from "./capture";
 import { structure } from "./structure";
 import { compare, highestFlagLevel } from "./compare";
 import { handoff } from "./handoff";
+import { followUp } from "./followUp";
 import { AudioInput, ImageInput, LLMProvider, OCRProvider, STTProvider } from "./providers/types";
-import { FlaggedEntry, HandoffResult, Protocol, RawCapture, RecipientRole, SchemaContext, StructuredEntry } from "./types";
+import { FlaggedEntry, FollowUpQuestion, HandoffResult, Protocol, RawCapture, RecipientRole, SchemaContext, StructuredEntry } from "./types";
 
 export interface PipelineResult {
   rawCapture: RawCapture;
   structuredEntries: StructuredEntry[];
   flaggedEntries: FlaggedEntry[];
   handoffResult: HandoffResult;
+  /** Only populated for voice visits — questions phrased in the language the CHW spoke in. */
+  followUpQuestions: FollowUpQuestion[];
 }
 
 interface RunPipelineArgs {
@@ -37,8 +40,12 @@ export async function runPipeline(args: RunPipelineArgs): Promise<PipelineResult
   const structuredEntries = await structure(textToStructure, args.schemaContext, args.llmProvider);
   const flaggedEntries = compare(structuredEntries, args.protocol);
   const handoffResult = await handoff(flaggedEntries, args.recipientRole, args.llmProvider);
+  const followUpQuestions =
+    args.input.kind === "voice"
+      ? await followUp(structuredEntries, flaggedEntries, args.schemaContext, rawCapture.language ?? "en", args.llmProvider)
+      : [];
 
-  return { rawCapture, structuredEntries, flaggedEntries, handoffResult };
+  return { rawCapture, structuredEntries, flaggedEntries, handoffResult, followUpQuestions };
 }
 
 export { highestFlagLevel };

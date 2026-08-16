@@ -3,6 +3,7 @@ export * from "./capture";
 export * from "./structure";
 export * from "./compare";
 export * from "./handoff";
+export * from "./followUp";
 export * from "./pipeline";
 export * from "./providers/types";
 export { MockSTTProvider, MockOCRProvider, MockLLMProvider } from "./providers/mock";

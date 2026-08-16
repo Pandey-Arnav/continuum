@@ -68,6 +68,12 @@ export interface HandoffResult {
   highestFlagLevel: FlagLevel;
 }
 
+/** A question phrased in the language the CHW spoke in, for them to ask the patient on the spot or at the next visit. */
+export interface FollowUpQuestion {
+  question: string; // in the spoken/target language
+  englishGloss: string; // English translation, for the record/supervisor
+}
+
 /** Persisted shape — mirrors the `entries` table in Postgres. */
 export interface Entry {
   id: string;

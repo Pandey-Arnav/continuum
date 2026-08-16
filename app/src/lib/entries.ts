@@ -23,6 +23,11 @@ export interface EntryRow {
 const FLAG_RANK: Record<EntryRow["flag_level"], number> = { green: 0, amber: 1, red: 2 };
 
 function headlineFact(flagged: FlaggedEntry[]): FlaggedEntry {
+  if (flagged.length === 0) {
+    throw new Error(
+      "Nothing was extracted from this capture — no facts matched the protocol's categories, so there's nothing to save. Try a different sample, or describe specific vitals/symptoms."
+    );
+  }
   return flagged.reduce((worst, next) => (FLAG_RANK[next.flagLevel] > FLAG_RANK[worst.flagLevel] ? next : worst));
 }
 
